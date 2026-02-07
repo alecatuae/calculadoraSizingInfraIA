@@ -1,0 +1,23 @@
+{
+    "servers": [
+      {
+        "name": "dgx300",
+        "gpus": 8,
+        "hbm_per_gpu_gb": 288,
+        "total_hbm_gb": 2304,
+        "nvlink_bandwidth_tbps": 14.4,
+        "system_memory_tb": 2,
+        "notes": "DGX B300: 8x GPUs Blackwell Ultra, 8x288GB HBM (=2.3TB), NVLink 14.4TB/s agregado. total_hbm_gb é soma direta de 8*288 (GB decimais)."
+      },
+      {
+        "name": "dgx200",
+        "gpus": 8,
+        "hbm_per_gpu_gb": 141,
+        "total_hbm_gb": 1128,
+        "nvlink_bandwidth_tbps": null,
+        "system_memory_tb": 2,
+        "notes": "DGX H200: 8x H200 com 1,128GB total de GPU memory (141GB por GPU, aproximado)."
+      }
+    ]
+  }
+  

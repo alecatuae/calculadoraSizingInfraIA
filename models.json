@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "name": "opt-oss-120b",
+      "num_layers": 36,
+      "num_key_value_heads": 8,
+      "head_dim": 64,
+      "max_position_embeddings": 131072,
+      "attention_pattern": "hybrid",
+      "hybrid_full_layers": 18,
+      "hybrid_sliding_layers": 18,
+      "sliding_window": 128,
+      "default_kv_precision": "fp8",
+      "notes": "Preenchido a partir do config de referência do gpt-oss-120b: 36 camadas, GQA com 8 KV heads, head_dim 64, max_position_embeddings 131072 e padrão híbrido (full+sliding) com sliding_window 128."
+    },
+    {
+      "name": "opt-oss-20b",
+      "num_layers": 24,
+      "num_key_value_heads": 8,
+      "head_dim": 64,
+      "max_position_embeddings": 131072,
+      "attention_pattern": "hybrid",
+      "hybrid_full_layers": 12,
+      "hybrid_sliding_layers": 12,
+      "sliding_window": 128,
+      "default_kv_precision": "fp8",
+      "notes": "Preenchido a partir do config do gpt-oss 20B (safeguard 20B): 24 camadas, 8 KV heads, max_position_embeddings 131072, lista de attention_types contendo sliding_attention e full_attention."
+    }
+  ]
+}
