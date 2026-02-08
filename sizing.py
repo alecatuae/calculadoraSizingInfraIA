@@ -855,6 +855,227 @@ def format_report(
     return "\n".join(lines)
 
 
+def format_report_markdown(
+    model: Model,
+    server: Server,
+    storage: StorageProfile,
+    scenarios: Dict[str, ScenarioResult],
+    concurrency: int,
+    effective_context: int,
+    kv_precision: str,
+    verbose: bool = False
+) -> str:
+    """Formata relatório completo em Markdown."""
+    lines = []
+    
+    # Título
+    lines.append("# Relatório de Dimensionamento de Inferência LLM")
+    lines.append("")
+    lines.append("**Sistema de Sizing com Racional de Cálculo e Análise de Cenários**")
+    lines.append("")
+    lines.append(f"**Data:** {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    
+    # Seção 1: Entradas
+    lines.append("## 📋 Seção 1: Entradas")
+    lines.append("")
+    
+    lines.append("### Modelo")
+    lines.append("")
+    lines.append(f"- **Nome:** {model.name}")
+    lines.append(f"- **Camadas:** {model.num_layers}")
+    lines.append(f"- **KV Heads:** {model.num_key_value_heads}")
+    lines.append(f"- **Head Dim:** {model.head_dim}")
+    lines.append(f"- **Max Position Embeddings:** {model.max_position_embeddings:,}")
+    lines.append(f"- **Padrão de Atenção:** {model.attention_pattern}")
+    if model.attention_pattern == "hybrid":
+        lines.append(f"  - Full Layers: {model.hybrid_full_layers}")
+        lines.append(f"  - Sliding Layers: {model.hybrid_sliding_layers}")
+        lines.append(f"  - Sliding Window: {model.sliding_window}")
+    elif model.attention_pattern == "sliding":
+        lines.append(f"  - Sliding Window: {model.sliding_window}")
+    lines.append(f"- **Precisão KV Padrão:** {model.default_kv_precision}")
+    lines.append("")
+    
+    lines.append("### Servidor")
+    lines.append("")
+    lines.append(f"- **Nome:** {server.name}")
+    lines.append(f"- **GPUs:** {server.gpus}")
+    lines.append(f"- **HBM por GPU:** {server.hbm_per_gpu_gb} GB")
+    lines.append(f"- **HBM Total:** {server.total_hbm_gb} GB ({server.total_hbm_gb * GB_TO_GIB:.1f} GiB)")
+    if server.nvlink_bandwidth_tbps:
+        lines.append(f"- **NVLink Bandwidth:** {server.nvlink_bandwidth_tbps} TB/s")
+    lines.append("")
+    
+    lines.append("### Storage")
+    lines.append("")
+    lines.append(f"- **Perfil:** {storage.name}")
+    lines.append(f"- **Tipo:** {storage.type}")
+    lines.append(f"- **IOPS:** {storage.iops_read:,} read / {storage.iops_write:,} write")
+    lines.append(f"- **Throughput:** {storage.throughput_read_gbps} GB/s read / {storage.throughput_write_gbps} GB/s write")
+    lines.append(f"- **Latência P99:** {storage.latency_read_ms_p99} ms read / {storage.latency_write_ms_p99} ms write")
+    lines.append("")
+    
+    lines.append("### NFR (Non-Functional Requirements)")
+    lines.append("")
+    lines.append(f"- **Concorrência Alvo:** {concurrency:,} sessões simultâneas")
+    lines.append(f"- **Contexto Efetivo:** {effective_context:,} tokens")
+    lines.append(f"- **Precisão KV:** {kv_precision}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    
+    # Seção 2: Dicionário de Parâmetros (resumido)
+    lines.append("## 📚 Seção 2: Dicionário de Parâmetros")
+    lines.append("")
+    lines.append("Principais parâmetros utilizados no dimensionamento:")
+    lines.append("")
+    
+    param_dict = get_parameter_dictionary()
+    key_params = [
+        "num_layers", "num_key_value_heads", "effective_context", 
+        "kv_precision", "kv_budget_ratio", "ha_mode"
+    ]
+    
+    for param_name in key_params:
+        if param_name in param_dict:
+            p = param_dict[param_name]
+            lines.append(f"### `{param_name}`")
+            lines.append("")
+            lines.append(f"**O que é:** {p['description']}")
+            lines.append("")
+            lines.append(f"**Importância:** {p['importance']}")
+            lines.append("")
+            lines.append(f"**Erro comum:** {p['common_errors']}")
+            lines.append("")
+    
+    lines.append("> ℹ️ Veja JSON para dicionário completo de todos os parâmetros")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    
+    # Seção 3: Resultados por Cenário
+    lines.append("## 🎯 Seção 3: Resultados por Cenário")
+    lines.append("")
+    
+    # Tabela comparativa
+    lines.append("### Comparação Rápida")
+    lines.append("")
+    lines.append("| Métrica | MÍNIMO | RECOMENDADO | IDEAL |")
+    lines.append("|---------|--------|-------------|-------|")
+    
+    min_sc = scenarios["minimum"]
+    rec_sc = scenarios["recommended"]
+    ideal_sc = scenarios["ideal"]
+    
+    lines.append(f"| **Headroom** | {min_sc.peak_headroom_ratio*100:.0f}% | {rec_sc.peak_headroom_ratio*100:.0f}% | {ideal_sc.peak_headroom_ratio*100:.0f}% |")
+    lines.append(f"| **HA** | {min_sc.ha_mode} | {rec_sc.ha_mode} | {ideal_sc.ha_mode} |")
+    lines.append(f"| **Budget KV** | {min_sc.kv_budget_ratio*100:.0f}% | {rec_sc.kv_budget_ratio*100:.0f}% | {ideal_sc.kv_budget_ratio*100:.0f}% |")
+    lines.append(f"| **KV/Sessão** | {min_sc.kv_per_session_gib:.2f} GiB | {rec_sc.kv_per_session_gib:.2f} GiB | {ideal_sc.kv_per_session_gib:.2f} GiB |")
+    lines.append(f"| **Sessões/Nó** | {min_sc.sessions_per_node} | {rec_sc.sessions_per_node} | {ideal_sc.sessions_per_node} |")
+    lines.append(f"| **Nós Finais** | **{min_sc.nodes_final}** | **{rec_sc.nodes_final}** ✅ | **{ideal_sc.nodes_final}** |")
+    lines.append("")
+    lines.append("> ✅ **RECOMENDADO** é o cenário ideal para produção")
+    lines.append("")
+    
+    # Detalhamento por cenário
+    for scenario_key in ["minimum", "recommended", "ideal"]:
+        scenario = scenarios[scenario_key]
+        
+        emoji = "🔴" if scenario_key == "minimum" else ("🟢" if scenario_key == "recommended" else "🔵")
+        lines.append(f"### {emoji} Cenário: {scenario.name}")
+        lines.append("")
+        
+        lines.append("**Configuração:**")
+        lines.append("")
+        lines.append(f"- Peak Headroom: {scenario.peak_headroom_ratio * 100:.0f}%")
+        lines.append(f"- HA Mode: {scenario.ha_mode}")
+        lines.append(f"- KV Budget Ratio: {scenario.kv_budget_ratio * 100:.0f}%")
+        lines.append("")
+        
+        lines.append("**Resultados:**")
+        lines.append("")
+        
+        results_data = [
+            ("KV por Sessão", f"{scenario.kv_per_session_gib:.2f} GiB"),
+            ("KV Total", f"{scenario.kv_total_tib:.2f} TiB"),
+            ("HBM Total", f"{scenario.hbm_total_gib:.1f} GiB"),
+            ("KV Budget", f"{scenario.kv_budget_gib:.1f} GiB"),
+            ("Sessões por Nó", f"{scenario.sessions_per_node:,}"),
+            ("Nós (Capacidade)", f"{scenario.nodes_capacity}"),
+            ("Nós (com Headroom)", f"{scenario.nodes_with_headroom}"),
+            ("**Nós Finais**", f"**{scenario.nodes_final}**"),
+        ]
+        
+        for label, value in results_data:
+            lines.append(f"- {label}: {value}")
+        
+        lines.append("")
+        
+        # Racional resumido para nós finais
+        if "nodes_final" in scenario.rationale:
+            rat = scenario.rationale["nodes_final"]
+            lines.append("<details>")
+            lines.append(f"<summary><b>📊 Racional: Nós Finais</b></summary>")
+            lines.append("")
+            lines.append("**Fórmula:**")
+            lines.append("")
+            lines.append("```")
+            lines.append(rat.formula)
+            lines.append("```")
+            lines.append("")
+            lines.append("**Interpretação:**")
+            lines.append("")
+            lines.append(rat.explanation)
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
+        
+        # Avisos do cenário
+        if scenario.warnings:
+            lines.append("**⚠️ Avisos:**")
+            lines.append("")
+            for i, warning in enumerate(scenario.warnings, 1):
+                lines.append(f"{i}. {warning}")
+            lines.append("")
+        
+        lines.append("---")
+        lines.append("")
+    
+    # Seção 4: Alertas e Riscos
+    lines.append("## ⚠️ Seção 4: Alertas e Riscos")
+    lines.append("")
+    
+    all_warnings = set()
+    for scenario in scenarios.values():
+        all_warnings.update(scenario.warnings)
+    
+    if all_warnings:
+        for i, warning in enumerate(sorted(all_warnings), 1):
+            lines.append(f"{i}. {warning}")
+    else:
+        lines.append("✅ Nenhum alerta crítico detectado.")
+    
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    
+    # Footer
+    lines.append("## 📝 Observações")
+    lines.append("")
+    lines.append("- Este relatório foi gerado automaticamente pelo sistema de sizing v2.0")
+    lines.append("- Para análise completa, consulte também o JSON output")
+    lines.append("- Use o **CENÁRIO RECOMENDADO** para produção (N+1, balanceado)")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("*Gerado por: Sistema de Sizing de Infraestrutura IA*")
+    
+    return "\n".join(lines)
+
+
 def scenarios_to_dict(
     model: Model,
     server: Server,
@@ -982,8 +1203,10 @@ def parse_args():
     
     # Output
     parser.add_argument("--output-json-file", help="Salvar JSON em arquivo")
+    parser.add_argument("--output-markdown-file", help="Salvar relatório em Markdown (.md)")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json-only", action="store_true")
+    parser.add_argument("--markdown-only", action="store_true", help="Gerar apenas relatório Markdown (sem JSON no stdout)")
     
     return parser.parse_args()
 
@@ -1037,8 +1260,8 @@ def main():
         verbose=args.verbose
     )
     
-    # Gerar outputs
-    if not args.json_only:
+    # Gerar relatório em texto (se não for markdown-only ou json-only)
+    if not args.json_only and not args.markdown_only:
         report = format_report(
             model=models[args.model],
             server=servers[args.server],
@@ -1055,28 +1278,52 @@ def main():
         print("JSON OUTPUT (3 CENÁRIOS):")
         print("=" * 100)
     
-    # JSON
-    json_output = scenarios_to_dict(
-        model=models[args.model],
-        server=servers[args.server],
-        storage=storage_profiles[args.storage],
-        scenarios=scenarios,
-        concurrency=args.concurrency,
-        effective_context=args.effective_context,
-        kv_precision=args.kv_precision,
-        kv_budget_ratio=args.kv_budget_ratio,
-        runtime_overhead_gib=args.runtime_overhead_gib,
-        peak_headroom_ratio=args.peak_headroom_ratio
-    )
+    # Gerar relatório em Markdown (se markdown-only ou se arquivo especificado)
+    if args.markdown_only or args.output_markdown_file:
+        markdown_report = format_report_markdown(
+            model=models[args.model],
+            server=servers[args.server],
+            storage=storage_profiles[args.storage],
+            scenarios=scenarios,
+            concurrency=args.concurrency,
+            effective_context=args.effective_context,
+            kv_precision=args.kv_precision,
+            verbose=args.verbose
+        )
+        
+        # Se markdown-only, imprimir no stdout
+        if args.markdown_only:
+            print(markdown_report)
+        
+        # Se arquivo especificado, salvar
+        if args.output_markdown_file:
+            with open(args.output_markdown_file, "w", encoding="utf-8") as f:
+                f.write(markdown_report)
+            print(f"Markdown salvo em: {args.output_markdown_file}", file=sys.stderr)
     
-    json_str = json.dumps(json_output, indent=2, ensure_ascii=False)
-    print(json_str)
-    
-    # Salvar em arquivo se solicitado
-    if args.output_json_file:
-        with open(args.output_json_file, "w", encoding="utf-8") as f:
-            f.write(json_str)
-        print(f"\nJSON salvo em: {args.output_json_file}", file=sys.stderr)
+    # JSON (se não for markdown-only)
+    if not args.markdown_only:
+        json_output = scenarios_to_dict(
+            model=models[args.model],
+            server=servers[args.server],
+            storage=storage_profiles[args.storage],
+            scenarios=scenarios,
+            concurrency=args.concurrency,
+            effective_context=args.effective_context,
+            kv_precision=args.kv_precision,
+            kv_budget_ratio=args.kv_budget_ratio,
+            runtime_overhead_gib=args.runtime_overhead_gib,
+            peak_headroom_ratio=args.peak_headroom_ratio
+        )
+        
+        json_str = json.dumps(json_output, indent=2, ensure_ascii=False)
+        print(json_str)
+        
+        # Salvar JSON em arquivo se solicitado
+        if args.output_json_file:
+            with open(args.output_json_file, "w", encoding="utf-8") as f:
+                f.write(json_str)
+            print(f"\nJSON salvo em: {args.output_json_file}", file=sys.stderr)
 
 
 if __name__ == "__main__":
