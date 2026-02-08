@@ -60,7 +60,12 @@ class Server:
     total_hbm_gb: float
     nvlink_bandwidth_tbps: Optional[float]
     system_memory_tb: Optional[float]
+    rack_units_u: int
+    power_kw_max: float
+    heat_output_btu_hr_max: Optional[float]
+    airflow_cfm: Optional[int]
     notes: str
+    source: Optional[List[str]] = None
 
 
 @dataclass
@@ -105,6 +110,11 @@ class ScenarioResult:
     nodes_capacity: int
     nodes_with_headroom: int
     nodes_final: int
+    
+    # Infraestrutura física
+    total_power_kw: float
+    total_rack_u: int
+    total_heat_btu_hr: Optional[float]
     
     rationale: Dict[str, Rationale]
     warnings: List[str]
@@ -156,7 +166,12 @@ def load_servers(filepath: str = "servers.json") -> Dict[str, Server]:
             total_hbm_gb=total_hbm,
             nvlink_bandwidth_tbps=s.get("nvlink_bandwidth_tbps"),
             system_memory_tb=s.get("system_memory_tb"),
-            notes=s["notes"]
+            rack_units_u=s.get("rack_units_u", 10),  # Default 10U se não especificado
+            power_kw_max=s.get("power_kw_max", 0.0),
+            heat_output_btu_hr_max=s.get("heat_output_btu_hr_max"),
+            airflow_cfm=s.get("airflow_cfm"),
+            notes=s["notes"],
+            source=s.get("source")
         )
         servers[server.name] = server
     
@@ -572,6 +587,62 @@ def calc_scenario_sizing(
             f"Modelos grandes (>50B parâmetros) tipicamente precisam de 80-150 GiB. Verifique se não está subestimado."
         )
     
+    # 7) Infraestrutura Física
+    # Energia total
+    total_power_kw = nodes_final * server.power_kw_max
+    
+    all_rationale["total_power_kw"] = Rationale(
+        formula=f"total_power_kw = nodes_final × power_kw_max",
+        inputs={
+            "nodes_final": nodes_final,
+            "power_kw_max": server.power_kw_max,
+            "server": server.name
+        },
+        explanation=(
+            f"Consumo total de energia para {nodes_final} nós × {server.power_kw_max} kW/nó = {total_power_kw} kW. "
+            f"Este é o dimensionamento de energia máxima do sistema, impactando PDU (Power Distribution Unit), "
+            f"capacidade de UPS, e contrato de energia do data center. Considere também eficiência de cooling (PUE ~1.3-1.5x)."
+        )
+    )
+    
+    # Espaço em rack
+    total_rack_u = nodes_final * server.rack_units_u
+    
+    all_rationale["total_rack_u"] = Rationale(
+        formula=f"total_rack_u = nodes_final × rack_units_u",
+        inputs={
+            "nodes_final": nodes_final,
+            "rack_units_u": server.rack_units_u,
+            "server": server.name
+        },
+        explanation=(
+            f"Espaço total de rack necessário: {nodes_final} nós × {server.rack_units_u}U/nó = {total_rack_u}U. "
+            f"Considerando racks padrão de 42U, isto equivale a {total_rack_u/42:.1f} racks. "
+            f"Impacta densidade de implantação e capacidade física do data center. "
+            f"Adicione ~20% para switches, PDUs e espaço de ventilação."
+        )
+    )
+    
+    # Heat output (se disponível)
+    total_heat_btu_hr = None
+    if server.heat_output_btu_hr_max is not None:
+        total_heat_btu_hr = nodes_final * server.heat_output_btu_hr_max
+        
+        all_rationale["total_heat_btu_hr"] = Rationale(
+            formula=f"total_heat_btu_hr = nodes_final × heat_output_btu_hr_max",
+            inputs={
+                "nodes_final": nodes_final,
+                "heat_output_btu_hr_max": server.heat_output_btu_hr_max,
+                "server": server.name
+            },
+            explanation=(
+                f"Dissipação térmica total: {nodes_final} nós × {server.heat_output_btu_hr_max:,.0f} BTU/hr/nó = "
+                f"{total_heat_btu_hr:,.0f} BTU/hr. Isto define a capacidade de refrigeração (cooling capacity) necessária. "
+                f"BTU/hr pode ser convertido em toneladas de refrigeração (1 ton = 12,000 BTU/hr): "
+                f"{total_heat_btu_hr/12000:.1f} tons. Impacta HVAC e COP (Coefficient of Performance) do data center."
+            )
+        )
+    
     # Criar resultado
     result = ScenarioResult(
         name=scenario_name,
@@ -588,6 +659,9 @@ def calc_scenario_sizing(
         nodes_capacity=nodes_capacity,
         nodes_with_headroom=nodes_with_headroom,
         nodes_final=nodes_final,
+        total_power_kw=total_power_kw,
+        total_rack_u=total_rack_u,
+        total_heat_btu_hr=total_heat_btu_hr,
         rationale=all_rationale,
         warnings=warnings
     )
@@ -1588,24 +1662,16 @@ def print_executive_summary(
     print()
     
     # Tabela resumida
-    print("-" * 80)
-    print(f"{'Cenário':<15} {'Nós DGX':>10} {'Sessões/Nó':>12} {'KV/Sessão (GiB)':>16} {'Observação':<25}")
-    print("-" * 80)
+    print("-" * 100)
+    print(f"{'Cenário':<15} {'Nós DGX':>10} {'Energia (kW)':>14} {'Rack (U)':>12} {'Sessões/Nó':>12} {'KV/Sessão (GiB)':>16}")
+    print("-" * 100)
     
     for scenario_key, scenario_label in [("minimum", "MÍNIMO"), ("recommended", "RECOMENDADO"), ("ideal", "IDEAL")]:
         sc = scenarios[scenario_key]
         
-        # Observação contextual
-        if scenario_key == "minimum":
-            obs = "Risco alto, sem HA"
-        elif scenario_key == "recommended":
-            obs = "✓ Produção (N+1)"
-        else:
-            obs = "Máxima resiliência (N+2)"
-        
-        print(f"{scenario_label:<15} {sc.nodes_final:>10} {sc.sessions_per_node:>12} {sc.kv_per_session_gib:>16.2f} {obs:<25}")
+        print(f"{scenario_label:<15} {sc.nodes_final:>10} {sc.total_power_kw:>14.1f} {sc.total_rack_u:>12} {sc.sessions_per_node:>12} {sc.kv_per_session_gib:>16.2f}")
     
-    print("-" * 80)
+    print("-" * 100)
     print()
     
     # Status final
@@ -1613,11 +1679,11 @@ def print_executive_summary(
     if rec.sessions_per_node == 0:
         print("⚠️  ERRO: Não cabe nem 1 sessão por nó. Ajuste contexto, precisão ou servidor.")
     elif rec.nodes_final <= 3:
-        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós) atende os requisitos com tolerância a falhas (N+1).")
+        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw:.1f} kW, {rec.total_rack_u}U) atende os requisitos com tolerância a falhas (N+1).")
     elif rec.nodes_final <= 10:
-        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós) atende os requisitos. Considere otimizações para grandes cargas.")
+        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw:.1f} kW, {rec.total_rack_u}U) atende os requisitos. Considere otimizações para grandes cargas.")
     else:
-        print(f"⚠️  Cenário RECOMENDADO requer {rec.nodes_final} nós. Revise NFRs ou considere modelo menor.")
+        print(f"⚠️  Cenário RECOMENDADO requer {rec.nodes_final} nós ({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U). Revise NFRs ou considere modelo menor.")
     
     print()
     

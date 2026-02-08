@@ -1,23 +1,36 @@
 {
-    "servers": [
-      {
-        "name": "dgx300",
-        "gpus": 8,
-        "hbm_per_gpu_gb": 288,
-        "total_hbm_gb": 2304,
-        "nvlink_bandwidth_tbps": 14.4,
-        "system_memory_tb": 2,
-        "notes": "DGX B300: 8x GPUs Blackwell Ultra, 8x288GB HBM (=2.3TB), NVLink 14.4TB/s agregado. total_hbm_gb é soma direta de 8*288 (GB decimais)."
-      },
-      {
-        "name": "dgx200",
-        "gpus": 8,
-        "hbm_per_gpu_gb": 141,
-        "total_hbm_gb": 1128,
-        "nvlink_bandwidth_tbps": null,
-        "system_memory_tb": 2,
-        "notes": "DGX H200: 8x H200 com 1,128GB total de GPU memory (141GB por GPU, aproximado)."
-      }
-    ]
-  }
-  
+  "servers": [
+    {
+      "name": "dgx-b300",
+      "gpus": 8,
+      "hbm_per_gpu_gb": 288,
+      "total_hbm_gb": 2304,
+      "nvlink_bandwidth_tbps": 14.4,
+      "system_memory_tb": 2,
+      "rack_units_u": 10,
+      "power_kw_max": 14.5,
+      "heat_output_btu_hr_max": 49476.054,
+      "airflow_cfm": null,
+      "notes": "DGX B300: 8x GPUs Blackwell Ultra, 8x288GB HBM (=2.3TB), NVLink 14.4TB/s. Rack: 10U, Power: 14.5 kW, Heat: 49,476.054 BTUs/hr (max). Dados de Physical and Operational Specifications.",
+      "source": [
+        "https://docs.nvidia.com/dgx/dgxb300-user-guide/introduction-to-dgxb300.html"
+      ]
+    },
+    {
+      "name": "dgx-b200",
+      "gpus": 8,
+      "hbm_per_gpu_gb": 180,
+      "total_hbm_gb": 1440,
+      "nvlink_bandwidth_tbps": null,
+      "system_memory_tb": 2,
+      "rack_units_u": 10,
+      "power_kw_max": 14.3,
+      "heat_output_btu_hr_max": null,
+      "airflow_cfm": null,
+      "notes": "DGX B200: 8x B200 GPUs, 180GB HBM por GPU. Form Factor: 10U Rackmount, Power: 14.3 kW max. Dados de Mechanical e Power Specifications.",
+      "source": [
+        "https://docs.nvidia.com/dgx/dgxb200-user-guide/introduction-to-dgxb200.html"
+      ]
+    }
+  ]
+}
