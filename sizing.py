@@ -48,6 +48,14 @@ class Model:
     hybrid_sliding_layers: Optional[int]
     sliding_window: Optional[int]
     default_kv_precision: str
+    # Novos campos para VRAM de pesos
+    total_params_b: Optional[float]
+    active_params_b: Optional[float]
+    weights_memory_gib_fp16: Optional[float]
+    weights_memory_gib_fp8: Optional[float]
+    weights_memory_gib_int8: Optional[float]
+    weights_memory_gib_int4: Optional[float]
+    default_weights_precision: str
     notes: str
 
 
@@ -101,15 +109,28 @@ class ScenarioResult:
     ha_extra_nodes: int
     kv_budget_ratio: float
     
+    # Métricas antigas (KV cache)
     kv_per_session_gib: float
     kv_total_gib: float
     kv_total_tib: float
     hbm_total_gib: float
-    kv_budget_gib: float
+    kv_budget_gib: float  # Mantido por compatibilidade, mas agora é sessions_budget_gib
     sessions_per_node: int
     nodes_capacity: int
     nodes_with_headroom: int
     nodes_final: int
+    
+    # Novas métricas de VRAM real
+    fixed_model_gib: float  # Memória dos pesos do modelo por nó
+    vram_per_session_gib: float  # KV cache por sessão (igual a kv_per_session_gib)
+    runtime_overhead_gib: float  # Overhead do runtime
+    budget_for_sessions_gib: float  # Budget bruto para sessões (HBM - fixed - overhead)
+    sessions_budget_gib: float  # Budget operacional (após ratio)
+    sessions_per_node_effective: int  # Sessões efetivas operando (concurrency/nodes)
+    vram_total_node_at_limit_gib: float  # VRAM total se operar no limite
+    vram_total_node_effective_gib: float  # VRAM total operando na concorrência efetiva
+    hbm_utilization_ratio_effective: float  # % de HBM utilizada (0.0-1.0)
+    weights_estimated: bool  # Se a memória de pesos foi estimada
     
     # Infraestrutura física
     total_power_kw: float
@@ -141,6 +162,13 @@ def load_models(filepath: str = "models.json") -> Dict[str, Model]:
             hybrid_sliding_layers=m.get("hybrid_sliding_layers"),
             sliding_window=m.get("sliding_window"),
             default_kv_precision=m["default_kv_precision"],
+            total_params_b=m.get("total_params_b"),
+            active_params_b=m.get("active_params_b"),
+            weights_memory_gib_fp16=m.get("weights_memory_gib_fp16"),
+            weights_memory_gib_fp8=m.get("weights_memory_gib_fp8"),
+            weights_memory_gib_int8=m.get("weights_memory_gib_int8"),
+            weights_memory_gib_int4=m.get("weights_memory_gib_int4"),
+            default_weights_precision=m.get("default_weights_precision", "fp8"),
             notes=m["notes"]
         )
         models[model.name] = model
@@ -201,6 +229,106 @@ def load_storage_profiles(filepath: str = "storage.json") -> Dict[str, StoragePr
         profiles[profile.name] = profile
     
     return profiles
+
+
+# ============================================================================
+# CÁLCULOS DE VRAM FIXA (PESOS DO MODELO)
+# ============================================================================
+
+WEIGHTS_PRECISION_BYTES = {
+    "fp16": 2,
+    "bf16": 2,
+    "fp8": 1,
+    "int8": 1,
+    "int4": 0.5
+}
+
+
+def calc_weights_memory_gib(
+    model: Model,
+    weights_precision: str,
+    weights_memory_override: Optional[float] = None
+) -> Tuple[float, bool]:
+    """
+    Calcula memória dos pesos do modelo em GiB.
+    
+    Args:
+        model: Modelo LLM
+        weights_precision: Precisão dos pesos (fp16/bf16/fp8/int8/int4)
+        weights_memory_override: Override manual (se fornecido, ignora models.json)
+    
+    Returns:
+        (weights_gib, is_estimated)
+        - weights_gib: Memória dos pesos em GiB
+        - is_estimated: True se foi estimado, False se veio de models.json ou override
+    """
+    # 1) Override manual tem prioridade
+    if weights_memory_override is not None:
+        return (weights_memory_override, False)
+    
+    # 2) Tentar buscar valor do models.json pela precisão
+    precision_map = {
+        "fp16": model.weights_memory_gib_fp16,
+        "bf16": model.weights_memory_gib_fp16,  # Usar FP16 como proxy para BF16
+        "fp8": model.weights_memory_gib_fp8,
+        "int8": model.weights_memory_gib_int8,
+        "int4": model.weights_memory_gib_int4
+    }
+    
+    weights_from_json = precision_map.get(weights_precision)
+    if weights_from_json is not None:
+        return (weights_from_json, False)
+    
+    # 3) Tentar estimar a partir de total_params_b
+    if model.total_params_b is not None:
+        bytes_per_param = WEIGHTS_PRECISION_BYTES[weights_precision]
+        weights_bytes = model.total_params_b * 1e9 * bytes_per_param
+        weights_gib = weights_bytes / (2 ** 30)
+        return (weights_gib, True)
+    
+    # 4) Fallback: não conseguiu calcular
+    raise ValueError(
+        f"Não foi possível determinar memória de pesos para {model.name} "
+        f"com precisão {weights_precision}. Forneça weights_memory_gib_<precision> "
+        f"em models.json, total_params_b para estimativa, ou use --weights-memory-gib."
+    )
+
+
+def calc_fixed_model_memory_per_node(
+    weights_gib: float,
+    replicas_per_node: int,
+    tensor_parallel: int,
+    pipeline_parallel: int
+) -> float:
+    """
+    Calcula memória fixa do modelo por nó, considerando paralelismo.
+    
+    Simplificação: Assume que os pesos são distribuídos (sharded) conforme
+    tensor_parallel × pipeline_parallel, e cada nó tem replicas_per_node réplicas.
+    
+    Args:
+        weights_gib: Memória total dos pesos (1 réplica completa)
+        replicas_per_node: Número de réplicas do modelo no nó
+        tensor_parallel: Grau de tensor paralelism (TP)
+        pipeline_parallel: Grau de pipeline paralelism (PP)
+    
+    Returns:
+        Memória fixa do modelo por nó (GiB)
+    """
+    # Cada réplica distribui pesos por TP × PP
+    # Suposição simplificada: distribuição uniforme
+    parallelism_factor = tensor_parallel * pipeline_parallel
+    weights_per_replica_shard = weights_gib / parallelism_factor if parallelism_factor > 0 else weights_gib
+    
+    # Total no nó = réplicas × shard por réplica
+    # Nota: Esta é uma simplificação. Em cenários reais:
+    # - TP distribui pesos entre GPUs
+    # - PP distribui camadas entre GPUs
+    # - Cada nó pode hospedar parte de uma ou mais réplicas
+    # Para sizing conservador, assumimos que o nó carrega réplicas completas (sharded)
+    fixed_model_gib = replicas_per_node * weights_per_replica_shard
+    
+    return fixed_model_gib
 
 
 # ============================================================================
@@ -414,8 +542,373 @@ def calc_scenario_sizing(
     runtime_overhead_gib: float,
     peak_headroom_ratio: float,
     ha_extra_nodes: int,
-    scenario_name: str
+    scenario_name: str,
+    weights_precision: str,
+    weights_memory_override: Optional[float] = None,
+    replicas_per_node: int = 1,
+    tensor_parallel: int = 1,
+    pipeline_parallel: int = 1
 ) -> ScenarioResult:
+    """
+    Calcula sizing completo para um cenário com racional detalhado.
+    Inclui cálculo de VRAM real: fixa (pesos) + variável (KV cache) + overhead.
+    """
+    warnings = []
+    all_rationale = {}
+    
+    # 1) Memória fixa dos pesos do modelo
+    weights_gib, weights_estimated = calc_weights_memory_gib(
+        model, weights_precision, weights_memory_override
+    )
+    
+    if weights_estimated:
+        warnings.append(
+            f"AVISO: Memória de pesos ESTIMADA a partir de total_params_b={model.total_params_b}B. "
+            f"Para sizing preciso, forneça weights_memory_gib_{weights_precision} em models.json."
+        )
+    
+    fixed_model_gib = calc_fixed_model_memory_per_node(
+        weights_gib, replicas_per_node, tensor_parallel, pipeline_parallel
+    )
+    
+    all_rationale["fixed_model_gib"] = Rationale(
+        formula=f"fixed_model_gib = (weights_gib / (TP × PP)) × replicas_per_node",
+        inputs={
+            "weights_gib": round(weights_gib, 2),
+            "weights_precision": weights_precision,
+            "replicas_per_node": replicas_per_node,
+            "tensor_parallel": tensor_parallel,
+            "pipeline_parallel": pipeline_parallel,
+            "estimated": weights_estimated
+        },
+        explanation=(
+            f"Memória dos pesos do modelo: {weights_gib:.1f} GiB ({'ESTIMADO' if weights_estimated else 'real'}) "
+            f"em precisão {weights_precision}. Com TP={tensor_parallel} e PP={pipeline_parallel}, pesos são distribuídos. "
+            f"Cada nó carrega {replicas_per_node} réplica(s), resultando em {fixed_model_gib:.1f} GiB de memória fixa por nó."
+        )
+    )
+    
+    # 2) KV cache por sessão (VRAM variável)
+    kv_per_session_gib, kv_rationale, kv_warnings = calc_kv_per_session_with_rationale(
+        model, effective_context, kv_precision
+    )
+    vram_per_session_gib = kv_per_session_gib  # Explícito: VRAM por sessão = KV cache
+    all_rationale.update(kv_rationale)
+    warnings.extend(kv_warnings)
+    
+    all_rationale["vram_per_session_gib"] = Rationale(
+        formula=f"vram_per_session_gib = kv_per_session_gib",
+        inputs={
+            "kv_per_session_gib": round(kv_per_session_gib, 4),
+            "kv_precision": kv_precision
+        },
+        explanation=(
+            f"VRAM consumida por cada sessão ativa: {vram_per_session_gib:.2f} GiB de KV cache. "
+            f"Esta memória é variável e escala linearmente com o número de sessões simultâneas."
+        )
+    )
+    
+    # 3) KV total
+    kv_total_gib = kv_per_session_gib * concurrency
+    kv_total_tib = kv_total_gib / 1024
+    
+    all_rationale["kv_total_gib"] = Rationale(
+        formula=f"kv_total_gib = vram_per_session_gib × concurrency",
+        inputs={
+            "vram_per_session_gib": round(vram_per_session_gib, 4),
+            "concurrency": concurrency
+        },
+        explanation=(
+            f"KV cache total necessário para {concurrency:,} sessões simultâneas: "
+            f"{kv_total_tib:.2f} TiB ({kv_total_gib:.1f} GiB) distribuídos entre os nós."
+        )
+    )
+    
+    # 4) HBM total do servidor
+    hbm_total_gib = server.total_hbm_gb * GB_TO_GIB
+    
+    all_rationale["hbm_total_gib"] = Rationale(
+        formula=f"hbm_total_gib = total_hbm_gb × (10^9 / 2^30)",
+        inputs={
+            "server": server.name,
+            "gpus": server.gpus,
+            "hbm_per_gpu_gb": server.hbm_per_gpu_gb,
+            "total_hbm_gb": server.total_hbm_gb,
+            "gb_to_gib_factor": GB_TO_GIB
+        },
+        explanation=(
+            f"Servidor {server.name}: {server.gpus} GPUs × {server.hbm_per_gpu_gb} GB/GPU = "
+            f"{server.total_hbm_gb} GB = {hbm_total_gib:.1f} GiB de HBM total por nó."
+        )
+    )
+    
+    # 5) Budget REAL para sessões (novo método)
+    budget_for_sessions_gib = hbm_total_gib - fixed_model_gib - runtime_overhead_gib
+    budget_for_sessions_gib = max(0, budget_for_sessions_gib)
+    
+    all_rationale["budget_for_sessions_gib"] = Rationale(
+        formula=f"budget_for_sessions_gib = hbm_total_gib - fixed_model_gib - runtime_overhead_gib",
+        inputs={
+            "hbm_total_gib": round(hbm_total_gib, 2),
+            "fixed_model_gib": round(fixed_model_gib, 2),
+            "runtime_overhead_gib": runtime_overhead_gib
+        },
+        explanation=(
+            f"Budget bruto disponível para sessões: {hbm_total_gib:.1f} GiB (HBM total) - "
+            f"{fixed_model_gib:.1f} GiB (pesos) - {runtime_overhead_gib} GiB (overhead) = "
+            f"{budget_for_sessions_gib:.1f} GiB. Este é o espaço restante antes de aplicar ratio operacional."
+        )
+    )
+    
+    # Aplicar ratio operacional
+    sessions_budget_gib = budget_for_sessions_gib * kv_budget_ratio
+    kv_budget_gib = sessions_budget_gib  # Mantido para compatibilidade
+    
+    all_rationale["sessions_budget_gib"] = Rationale(
+        formula=f"sessions_budget_gib = budget_for_sessions_gib × kv_budget_ratio",
+        inputs={
+            "budget_for_sessions_gib": round(budget_for_sessions_gib, 2),
+            "kv_budget_ratio": kv_budget_ratio
+        },
+        explanation=(
+            f"Budget operacional para sessões: {budget_for_sessions_gib:.1f} GiB × {kv_budget_ratio*100:.0f}% = "
+            f"{sessions_budget_gib:.1f} GiB. Os restantes {(1-kv_budget_ratio)*100:.0f}% ({budget_for_sessions_gib*(1-kv_budget_ratio):.1f} GiB) "
+            f"ficam livres para fragmentação, picos de memória e estabilidade."
+        )
+    )
+    
+    # Alertas críticos
+    if budget_for_sessions_gib <= 0:
+        warnings.append(
+            f"ERRO CRÍTICO: Budget bruto para sessões <= 0! "
+            f"Pesos ({fixed_model_gib:.1f} GiB) + Overhead ({runtime_overhead_gib} GiB) = "
+            f"{fixed_model_gib + runtime_overhead_gib:.1f} GiB consomem toda a HBM ({hbm_total_gib:.1f} GiB). "
+            f"Servidor não pode suportar NENHUMA sessão. Use servidor maior ou reduza overhead/pesos."
+        )
+    
+    # 6) Sessões por nó (capacidade real)
+    if sessions_budget_gib <= 0:
+        sessions_per_node = 0
+        warnings.append(
+            f"ERRO: Budget operacional para sessões <= 0. Sistema não pode operar."
+        )
+    else:
+        sessions_per_node = int(sessions_budget_gib / vram_per_session_gib)
+        
+        if sessions_per_node == 0:
+            warnings.append(
+                f"ERRO: Não cabe nem 1 sessão por nó! "
+                f"Sessão precisa de {vram_per_session_gib:.2f} GiB mas budget é {sessions_budget_gib:.1f} GiB. "
+                f"Soluções: (1) Reduzir effective_context, (2) Usar KV precision fp8, "
+                f"(3) Usar weights precision fp8/int8, (4) Reduzir runtime_overhead_gib, "
+                f"(5) Aumentar kv_budget_ratio, ou (6) Usar servidor com mais HBM."
+            )
+    
+    all_rationale["sessions_per_node"] = Rationale(
+        formula=f"sessions_per_node = floor(sessions_budget_gib / vram_per_session_gib)",
+        inputs={
+            "sessions_budget_gib": round(sessions_budget_gib, 2),
+            "vram_per_session_gib": round(vram_per_session_gib, 4)
+        },
+        explanation=(
+            f"Capacidade de sessões por nó: {sessions_budget_gib:.1f} GiB / {vram_per_session_gib:.2f} GiB/sessão = "
+            f"{sessions_per_node} sessões. Este é o limite máximo de concorrência por servidor, "
+            f"determinado puramente por memória disponível para KV cache."
+        )
+    )
+    
+    # 7) Nós necessários
+    if sessions_per_node > 0:
+        nodes_capacity = math.ceil(concurrency / sessions_per_node)
+        concurrency_with_headroom = concurrency * (1 + peak_headroom_ratio)
+        nodes_with_headroom = math.ceil(concurrency_with_headroom / sessions_per_node)
+    else:
+        nodes_capacity = 0
+        nodes_with_headroom = 0
+    
+    nodes_final = nodes_with_headroom + ha_extra_nodes
+    
+    all_rationale["nodes_capacity"] = Rationale(
+        formula=f"nodes_capacity = ceil(concurrency / sessions_per_node)",
+        inputs={
+            "concurrency": concurrency,
+            "sessions_per_node": sessions_per_node
+        },
+        explanation=(
+            f"Nós necessários para capacidade pura: ceil({concurrency:,} / {sessions_per_node}) = {nodes_capacity} nós."
+        )
+    )
+    
+    all_rationale["nodes_with_headroom"] = Rationale(
+        formula=f"nodes_with_headroom = ceil(concurrency × (1 + peak_headroom_ratio) / sessions_per_node)",
+        inputs={
+            "concurrency": concurrency,
+            "peak_headroom_ratio": peak_headroom_ratio,
+            "concurrency_with_headroom": round(concurrency * (1 + peak_headroom_ratio), 1),
+            "sessions_per_node": sessions_per_node
+        },
+        explanation=(
+            f"Nós com headroom de {peak_headroom_ratio*100:.0f}% para picos: {nodes_with_headroom} nós."
+        )
+    )
+    
+    all_rationale["nodes_final"] = Rationale(
+        formula=f"nodes_final = nodes_with_headroom + ha_extra_nodes",
+        inputs={
+            "nodes_with_headroom": nodes_with_headroom,
+            "ha_extra_nodes": ha_extra_nodes,
+            "ha_mode": "n+2" if ha_extra_nodes == 2 else ("n+1" if ha_extra_nodes == 1 else "none")
+        },
+        explanation=(
+            f"Nós finais com HA: {nodes_with_headroom} + {ha_extra_nodes} = {nodes_final} nós."
+        )
+    )
+    
+    # 8) VRAM por nó (efetiva e no limite)
+    sessions_per_node_effective = math.ceil(concurrency / nodes_final) if nodes_final > 0 else 0
+    
+    # VRAM no limite (operando à capacidade máxima)
+    vram_total_node_at_limit_gib = (
+        fixed_model_gib + 
+        runtime_overhead_gib + 
+        (sessions_per_node * vram_per_session_gib)
+    )
+    
+    # VRAM efetiva (operando na concorrência distribuída)
+    vram_total_node_effective_gib = (
+        fixed_model_gib + 
+        runtime_overhead_gib + 
+        (sessions_per_node_effective * vram_per_session_gib)
+    )
+    
+    hbm_utilization_ratio_effective = vram_total_node_effective_gib / hbm_total_gib if hbm_total_gib > 0 else 0
+    
+    all_rationale["vram_total_node_effective_gib"] = Rationale(
+        formula=f"vram_total = fixed_model_gib + runtime_overhead_gib + (sessions_effective × vram_per_session)",
+        inputs={
+            "fixed_model_gib": round(fixed_model_gib, 2),
+            "runtime_overhead_gib": runtime_overhead_gib,
+            "sessions_per_node_effective": sessions_per_node_effective,
+            "vram_per_session_gib": round(vram_per_session_gib, 4)
+        },
+        explanation=(
+            f"VRAM total por nó operando: {fixed_model_gib:.1f} GiB (pesos) + {runtime_overhead_gib} GiB (overhead) + "
+            f"({sessions_per_node_effective} sessões × {vram_per_session_gib:.2f} GiB) = {vram_total_node_effective_gib:.1f} GiB. "
+            f"Utilização de HBM: {hbm_utilization_ratio_effective*100:.1f}%."
+        )
+    )
+    
+    # Alertas adicionais
+    if hbm_utilization_ratio_effective > 0.90:
+        warnings.append(
+            f"ALERTA: Utilização de HBM muito alta ({hbm_utilization_ratio_effective*100:.1f}%). "
+            f"Sistema opera no limite. Risco de instabilidade e fragmentação."
+        )
+    
+    if kv_budget_ratio > 0.75:
+        warnings.append(
+            f"ALERTA: kv_budget_ratio={kv_budget_ratio*100:.0f}% é alto (>75%). "
+            f"Risco de fragmentação. Considere 65-70%."
+        )
+    
+    if runtime_overhead_gib < 50:
+        warnings.append(
+            f"ALERTA: runtime_overhead_gib={runtime_overhead_gib} GiB pode estar subestimado (<50 GiB). "
+            f"Modelos grandes (>50B params) tipicamente precisam de 80-150 GiB."
+        )
+    
+    if effective_context >= 128000:
+        warnings.append(
+            f"ALERTA: Contexto longo ({effective_context:,} tokens) aumenta TTFT e pressiona I/O."
+        )
+    
+    if kv_precision in ["fp16", "bf16"]:
+        warnings.append(
+            f"ALERTA: kv_precision={kv_precision} usa 2x memória vs fp8/int8. "
+            f"Considere fp8 para dobrar capacidade de sessões."
+        )
+    
+    # 9) Infraestrutura Física
+    total_power_kw = nodes_final * server.power_kw_max
+    
+    all_rationale["total_power_kw"] = Rationale(
+        formula=f"total_power_kw = nodes_final × power_kw_max",
+        inputs={
+            "nodes_final": nodes_final,
+            "power_kw_max": server.power_kw_max
+        },
+        explanation=(
+            f"Energia total: {nodes_final} nós × {server.power_kw_max} kW = {total_power_kw} kW. "
+            f"Dimensiona PDU, UPS e contrato de energia. Considere PUE ~1.4x para cooling."
+        )
+    )
+    
+    total_rack_u = nodes_final * server.rack_units_u
+    
+    all_rationale["total_rack_u"] = Rationale(
+        formula=f"total_rack_u = nodes_final × rack_units_u",
+        inputs={
+            "nodes_final": nodes_final,
+            "rack_units_u": server.rack_units_u
+        },
+        explanation=(
+            f"Rack total: {nodes_final} nós × {server.rack_units_u}U = {total_rack_u}U "
+            f"({total_rack_u/42:.1f} racks padrão). Adicione ~20% para infra."
+        )
+    )
+    
+    total_heat_btu_hr = None
+    if server.heat_output_btu_hr_max is not None:
+        total_heat_btu_hr = nodes_final * server.heat_output_btu_hr_max
+        
+        all_rationale["total_heat_btu_hr"] = Rationale(
+            formula=f"total_heat_btu_hr = nodes_final × heat_output_btu_hr_max",
+            inputs={
+                "nodes_final": nodes_final,
+                "heat_output_btu_hr_max": server.heat_output_btu_hr_max
+            },
+            explanation=(
+                f"Dissipação térmica: {total_heat_btu_hr:,.0f} BTU/hr = {total_heat_btu_hr/12000:.1f} tons de refrigeração."
+            )
+        )
+    
+    # Criar resultado
+    result = ScenarioResult(
+        name=scenario_name,
+        peak_headroom_ratio=peak_headroom_ratio,
+        ha_mode="n+2" if ha_extra_nodes == 2 else ("n+1" if ha_extra_nodes == 1 else "none"),
+        ha_extra_nodes=ha_extra_nodes,
+        kv_budget_ratio=kv_budget_ratio,
+        # Métricas antigas (compatibilidade)
+        kv_per_session_gib=kv_per_session_gib,
+        kv_total_gib=kv_total_gib,
+        kv_total_tib=kv_total_tib,
+        hbm_total_gib=hbm_total_gib,
+        kv_budget_gib=kv_budget_gib,
+        sessions_per_node=sessions_per_node,
+        nodes_capacity=nodes_capacity,
+        nodes_with_headroom=nodes_with_headroom,
+        nodes_final=nodes_final,
+        # Novas métricas de VRAM
+        fixed_model_gib=fixed_model_gib,
+        vram_per_session_gib=vram_per_session_gib,
+        runtime_overhead_gib=runtime_overhead_gib,
+        budget_for_sessions_gib=budget_for_sessions_gib,
+        sessions_budget_gib=sessions_budget_gib,
+        sessions_per_node_effective=sessions_per_node_effective,
+        vram_total_node_at_limit_gib=vram_total_node_at_limit_gib,
+        vram_total_node_effective_gib=vram_total_node_effective_gib,
+        hbm_utilization_ratio_effective=hbm_utilization_ratio_effective,
+        weights_estimated=weights_estimated,
+        # Infraestrutura física
+        total_power_kw=total_power_kw,
+        total_rack_u=total_rack_u,
+        total_heat_btu_hr=total_heat_btu_hr,
+        rationale=all_rationale,
+        warnings=warnings
+    )
+    
+    return result
     """
     Calcula sizing completo para um cenário com racional detalhado.
     """
@@ -682,11 +1175,25 @@ def calculate_sizing_all_scenarios(
     kv_budget_ratio: float,
     runtime_overhead_gib: float,
     peak_headroom_ratio: float,
+    weights_precision: Optional[str] = None,
+    weights_memory_override: Optional[float] = None,
+    replicas_per_node: int = 1,
+    tensor_parallel: Optional[int] = None,
+    pipeline_parallel: int = 1,
     verbose: bool = False
 ) -> Dict[str, ScenarioResult]:
     """
     Calcula sizing para os 3 cenários obrigatórios: MÍNIMO, RECOMENDADO, IDEAL.
+    Inclui cálculo de VRAM fixa (pesos do modelo) e VRAM variável (KV cache).
     """
+    # Determinar weights_precision
+    if weights_precision is None:
+        weights_precision = model.default_weights_precision
+    
+    # Determinar tensor_parallel (default: todas GPUs do servidor)
+    if tensor_parallel is None:
+        tensor_parallel = server.gpus
+    
     scenarios = {}
     
     # CENÁRIO MÍNIMO
@@ -701,7 +1208,12 @@ def calculate_sizing_all_scenarios(
         runtime_overhead_gib=runtime_overhead_gib,
         peak_headroom_ratio=0.0,  # Sem headroom
         ha_extra_nodes=0,  # Sem HA
-        scenario_name="MÍNIMO"
+        scenario_name="MÍNIMO",
+        weights_precision=weights_precision,
+        weights_memory_override=weights_memory_override,
+        replicas_per_node=replicas_per_node,
+        tensor_parallel=tensor_parallel,
+        pipeline_parallel=pipeline_parallel
     )
     
     # CENÁRIO RECOMENDADO
@@ -716,7 +1228,12 @@ def calculate_sizing_all_scenarios(
         runtime_overhead_gib=runtime_overhead_gib,
         peak_headroom_ratio=peak_headroom_ratio,  # Headroom configurado
         ha_extra_nodes=1,  # N+1
-        scenario_name="RECOMENDADO"
+        scenario_name="RECOMENDADO",
+        weights_precision=weights_precision,
+        weights_memory_override=weights_memory_override,
+        replicas_per_node=replicas_per_node,
+        tensor_parallel=tensor_parallel,
+        pipeline_parallel=pipeline_parallel
     )
     
     # CENÁRIO IDEAL
@@ -735,7 +1252,12 @@ def calculate_sizing_all_scenarios(
         runtime_overhead_gib=runtime_overhead_gib,
         peak_headroom_ratio=ideal_headroom,  # Mínimo 30%
         ha_extra_nodes=2,  # N+2
-        scenario_name="IDEAL"
+        scenario_name="IDEAL",
+        weights_precision=weights_precision,
+        weights_memory_override=weights_memory_override,
+        replicas_per_node=replicas_per_node,
+        tensor_parallel=tensor_parallel,
+        pipeline_parallel=pipeline_parallel
     )
     
     return scenarios
@@ -840,6 +1362,55 @@ def format_report(
     lines.append("")
     
     # ========================================================================
+    # SEÇÃO 2.5: CONSUMO REAL DE VRAM (UNITÁRIO E AGREGADO)
+    # ========================================================================
+    lines.append("┌" + "─" * 98 + "┐")
+    lines.append("│" + " SEÇÃO 2.5: CONSUMO REAL DE VRAM (Pesos + KV Cache + Overhead)".ljust(98) + "│")
+    lines.append("└" + "─" * 98 + "┘")
+    lines.append("")
+    
+    # Usar cenário recomendado como referência para consumo unitário
+    rec = scenarios["recommended"]
+    
+    lines.append("CONSUMO UNITÁRIO (por sessão e por nó):")
+    lines.append("")
+    lines.append("┌─────────────────────────────────────────┬──────────────────┬────────────────────────────────────────┐")
+    lines.append("│ Item                                    │ VRAM (GiB)       │ Observação                             │")
+    lines.append("├─────────────────────────────────────────┼──────────────────┼────────────────────────────────────────┤")
+    lines.append(f"│ Pesos do modelo (por réplica)          │ {rec.fixed_model_gib:>16.2f} │ {'ESTIMADO' if rec.weights_estimated else 'Real'} + precisão weights │")
+    lines.append(f"│ Overhead do runtime (por nó)           │ {rec.runtime_overhead_gib:>16.2f} │ Buffers, ativações, fragmentação       │")
+    lines.append(f"│ KV cache (por sessão)                  │ {rec.vram_per_session_gib:>16.2f} │ Contexto={effective_context:,}, KV precision={kv_precision} │")
+    lines.append("└─────────────────────────────────────────┴──────────────────┴────────────────────────────────────────┘")
+    lines.append("")
+    
+    lines.append("BUDGET E CAPACIDADE POR NÓ:")
+    lines.append("")
+    lines.append("┌─────────────────────────────────────────┬──────────────────┐")
+    lines.append("│ Métrica                                 │ Valor            │")
+    lines.append("├─────────────────────────────────────────┼──────────────────┤")
+    lines.append(f"│ HBM total do nó                        │ {rec.hbm_total_gib:>13.1f} GiB │")
+    lines.append(f"│ VRAM fixa (pesos)                      │ {rec.fixed_model_gib:>13.1f} GiB │")
+    lines.append(f"│ Overhead runtime                       │ {rec.runtime_overhead_gib:>13.1f} GiB │")
+    lines.append(f"│ Budget bruto para sessões              │ {rec.budget_for_sessions_gib:>13.1f} GiB │")
+    lines.append(f"│ Budget operacional ({rec.kv_budget_ratio*100:.0f}%)             │ {rec.sessions_budget_gib:>13.1f} GiB │")
+    lines.append(f"│ Sessões suportadas por nó              │ {rec.sessions_per_node:>16,} │")
+    lines.append(f"│ VRAM total operando (efetiva)          │ {rec.vram_total_node_effective_gib:>13.1f} GiB │")
+    lines.append(f"│ Utilização de HBM (efetiva)            │ {rec.hbm_utilization_ratio_effective*100:>14.1f} % │")
+    lines.append("└─────────────────────────────────────────┴──────────────────┘")
+    lines.append("")
+    
+    if rec.weights_estimated:
+        lines.append("⚠️  AVISO: Memória de pesos foi ESTIMADA. Para sizing preciso, forneça valores reais em models.json.")
+        lines.append("")
+    
+    lines.append("INTERPRETAÇÃO:")
+    lines.append(f"  • Cada nó carrega {rec.fixed_model_gib:.1f} GiB de pesos (fixo) + {rec.runtime_overhead_gib} GiB de overhead")
+    lines.append(f"  • Sobram {rec.budget_for_sessions_gib:.1f} GiB para sessões; aplicando ratio {rec.kv_budget_ratio*100:.0f}% → {rec.sessions_budget_gib:.1f} GiB operacional")
+    lines.append(f"  • Cada sessão consome {rec.vram_per_session_gib:.2f} GiB → máximo de {rec.sessions_per_node} sessões/nó")
+    lines.append(f"  • Operando com {rec.sessions_per_node_effective} sessões/nó → {rec.vram_total_node_effective_gib:.1f} GiB VRAM total ({rec.hbm_utilization_ratio_effective*100:.1f}% HBM)")
+    lines.append("")
+    
+    # ========================================================================
     # SEÇÃO 3: RESULTADOS POR CENÁRIO
     # ========================================================================
     lines.append("┌" + "─" * 98 + "┐")
@@ -859,14 +1430,17 @@ def format_report(
         
         # Resultados com racional
         results_to_show = [
-            ("kv_per_session_gib", f"{scenario.kv_per_session_gib:.2f} GiB"),
-            ("kv_total_gib", f"{scenario.kv_total_tib:.2f} TiB ({scenario.kv_total_gib:.2f} GiB)"),
-            ("hbm_total_gib", f"{scenario.hbm_total_gib:.1f} GiB"),
-            ("kv_budget_gib", f"{scenario.kv_budget_gib:.1f} GiB"),
-            ("sessions_per_node", f"{scenario.sessions_per_node:,} sessões"),
+            ("fixed_model_gib", f"{scenario.fixed_model_gib:.2f} GiB"),
+            ("vram_per_session_gib", f"{scenario.vram_per_session_gib:.2f} GiB"),
+            ("sessions_budget_gib", f"{scenario.sessions_budget_gib:.1f} GiB"),
+            ("sessions_per_node", f"{scenario.sessions_per_node:,} sessões (capacidade máxima)"),
+            ("sessions_per_node_effective", f"{scenario.sessions_per_node_effective:,} sessões (operando)"),
+            ("vram_total_node_effective_gib", f"{scenario.vram_total_node_effective_gib:.1f} GiB ({scenario.hbm_utilization_ratio_effective*100:.1f}% HBM)"),
             ("nodes_capacity", f"{scenario.nodes_capacity} nós"),
             ("nodes_with_headroom", f"{scenario.nodes_with_headroom} nós"),
             ("nodes_final", f"{scenario.nodes_final} nós"),
+            ("total_power_kw", f"{scenario.total_power_kw:.1f} kW"),
+            ("total_rack_u", f"{scenario.total_rack_u}U"),
         ]
         
         for key, value in results_to_show:
@@ -1552,6 +2126,7 @@ def scenarios_to_dict(
                 "kv_budget_ratio": s.kv_budget_ratio
             },
             "results": {
+                # Métricas antigas (compatibilidade)
                 "kv_per_session_gib": round(s.kv_per_session_gib, 4),
                 "kv_total_gib": round(s.kv_total_gib, 2),
                 "kv_total_tib": round(s.kv_total_tib, 4),
@@ -1560,7 +2135,22 @@ def scenarios_to_dict(
                 "sessions_per_node": s.sessions_per_node,
                 "nodes_capacity": s.nodes_capacity,
                 "nodes_with_headroom": s.nodes_with_headroom,
-                "nodes_final": s.nodes_final
+                "nodes_final": s.nodes_final,
+                # Novas métricas de VRAM real
+                "fixed_model_gib": round(s.fixed_model_gib, 2),
+                "vram_per_session_gib": round(s.vram_per_session_gib, 4),
+                "runtime_overhead_gib": s.runtime_overhead_gib,
+                "budget_for_sessions_gib": round(s.budget_for_sessions_gib, 2),
+                "sessions_budget_gib": round(s.sessions_budget_gib, 2),
+                "sessions_per_node_effective": s.sessions_per_node_effective,
+                "vram_total_node_at_limit_gib": round(s.vram_total_node_at_limit_gib, 2),
+                "vram_total_node_effective_gib": round(s.vram_total_node_effective_gib, 2),
+                "hbm_utilization_ratio_effective": round(s.hbm_utilization_ratio_effective, 4),
+                "weights_estimated": s.weights_estimated,
+                # Infraestrutura física
+                "total_power_kw": round(s.total_power_kw, 2),
+                "total_rack_u": s.total_rack_u,
+                "total_heat_btu_hr": round(s.total_heat_btu_hr, 0) if s.total_heat_btu_hr else None
             },
             "rationale": {k: rationale_to_dict(v) for k, v in s.rationale.items()},
             "warnings": s.warnings
@@ -1624,7 +2214,7 @@ def scenarios_to_dict(
 def parse_args():
     """Parse argumentos CLI."""
     parser = argparse.ArgumentParser(
-        description="Dimensionamento Avançado de Inferência LLM com Racional de Cálculo",
+        description="Dimensionamento Avançado de Inferência LLM com Cálculo Real de VRAM",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
@@ -1636,10 +2226,26 @@ def parse_args():
     # NFRs
     parser.add_argument("--concurrency", type=int, required=True, help="Sessões simultâneas")
     parser.add_argument("--effective-context", type=int, required=True, help="Contexto efetivo (tokens)")
-    parser.add_argument("--kv-precision", choices=["fp8", "fp16", "bf16", "int8"], default="fp8")
-    parser.add_argument("--kv-budget-ratio", type=float, default=0.70)
-    parser.add_argument("--runtime-overhead-gib", type=float, default=120)
-    parser.add_argument("--peak-headroom-ratio", type=float, default=0.20)
+    parser.add_argument("--kv-precision", choices=["fp8", "fp16", "bf16", "int8"], default="fp8", 
+                        help="Precisão do KV cache")
+    parser.add_argument("--kv-budget-ratio", type=float, default=0.70, 
+                        help="Ratio operacional de budget para sessões (default: 0.70)")
+    parser.add_argument("--runtime-overhead-gib", type=float, default=120, 
+                        help="Overhead do runtime (buffers, fragmentação) em GiB")
+    parser.add_argument("--peak-headroom-ratio", type=float, default=0.20,
+                        help="Headroom para picos (default: 0.20)")
+    
+    # Novos parâmetros de VRAM/pesos
+    parser.add_argument("--weights-precision", choices=["fp16", "bf16", "fp8", "int8", "int4"], 
+                        help="Precisão dos pesos do modelo (default: usar default_weights_precision do modelo)")
+    parser.add_argument("--weights-memory-gib", type=float, 
+                        help="Override manual da memória dos pesos em GiB (ignora models.json)")
+    parser.add_argument("--replicas-per-node", type=int, default=1, 
+                        help="Número de réplicas do modelo por nó (default: 1)")
+    parser.add_argument("--tensor-parallel", type=int, 
+                        help="Grau de tensor paralelism (default: usar todas as GPUs do servidor)")
+    parser.add_argument("--pipeline-parallel", type=int, default=1, 
+                        help="Grau de pipeline paralelism (default: 1)")
     
     # Arquivos
     parser.add_argument("--models-file", default="models.json")
@@ -1835,6 +2441,11 @@ def main():
         kv_budget_ratio=args.kv_budget_ratio,
         runtime_overhead_gib=args.runtime_overhead_gib,
         peak_headroom_ratio=args.peak_headroom_ratio,
+        weights_precision=args.weights_precision,
+        weights_memory_override=args.weights_memory_gib,
+        replicas_per_node=args.replicas_per_node,
+        tensor_parallel=args.tensor_parallel,
+        pipeline_parallel=args.pipeline_parallel,
         verbose=args.verbose
     )
     
@@ -1908,6 +2519,93 @@ def main():
         print(f"   • Executivo: {executive_filename}")
         print()
 
+
+# ============================================================================
+# EXEMPLOS DE USO
+# ============================================================================
+"""
+EXEMPLOS DE EXECUÇÃO:
+
+1) opt-oss-120b + dgx-b300 + 128k context + 1000 sessões + FP8 (KV e pesos)
+   
+   python3 sizing.py \
+       --model opt-oss-120b \
+       --server dgx-b300 \
+       --storage profile_default \
+       --concurrency 1000 \
+       --effective-context 131072 \
+       --kv-precision fp8 \
+       --weights-precision fp8
+   
+   Resultado esperado:
+   - Pesos do modelo: 120 GiB (FP8)
+   - KV por sessão: ~2.25 GiB (FP8)
+   - Sessões por nó: ~624 (considerando 70% budget e 120 GiB overhead)
+   - Nós recomendados: 3 (N+1)
+   - Energia: 43.5 kW
+   - Rack: 30U
+
+2) Mesmo cenário com KV PRECISION FP16 (comparação)
+   
+   python3 sizing.py \
+       --model opt-oss-120b \
+       --server dgx-b300 \
+       --storage profile_default \
+       --concurrency 1000 \
+       --effective-context 131072 \
+       --kv-precision fp16 \
+       --weights-precision fp8
+   
+   Resultado esperado:
+   - Pesos do modelo: 120 GiB (FP8, inalterado)
+   - KV por sessão: ~4.50 GiB (FP16, DOBROU!)
+   - Sessões por nó: ~312 (METADE!)
+   - Nós recomendados: 4-5 (AUMENTOU!)
+   - Energia e rack proporcionalmente maiores
+   
+   LIÇÃO: KV precision FP16 vs FP8 dobra a memória de KV,
+   reduz sessões/nó pela metade, e aumenta significativamente
+   o número de servidores e custo de infraestrutura.
+
+3) opt-oss-20b + dgx-b200 + 64k context + 500 sessões + FP8
+   
+   python3 sizing.py \
+       --model opt-oss-20b \
+       --server dgx-b200 \
+       --storage profile_default \
+       --concurrency 500 \
+       --effective-context 65536 \
+       --kv-precision fp8 \
+       --weights-precision fp8
+   
+   Resultado esperado:
+   - Modelo menor (20B vs 120B)
+   - Pesos: 20 GiB (FP8)
+   - KV por sessão: ~0.75 GiB (contexto menor)
+   - Sessões por nó: ~1100+
+   - Nós recomendados: 2 (N+1 para 500 sessões)
+   - Energia: ~29 kW
+   
+   LIÇÃO: Modelo menor + contexto menor = muito mais sessões por nó
+   e menor número de servidores necessários.
+
+4) Testar impacto de WEIGHTS PRECISION (120B FP16 vs FP8)
+   
+   # FP16 pesos
+   python3 sizing.py \
+       --model opt-oss-120b --server dgx-b300 \
+       --storage profile_default \
+       --concurrency 1000 --effective-context 131072 \
+       --kv-precision fp8 \
+       --weights-precision fp16
+   
+   Resultado: Pesos 240 GiB (vs 120 GiB em FP8)
+   Budget para sessões diminui proporcionalmente.
+   Sessões/nó reduzem ligeiramente (menos budget disponível).
+   
+   LIÇÃO: Weights precision impacta VRAM fixa.
+   FP8/INT8 pesos economiza memória que pode ser usada para mais sessões.
+"""
 
 if __name__ == "__main__":
     main()

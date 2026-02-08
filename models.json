@@ -11,7 +11,14 @@
       "hybrid_sliding_layers": 18,
       "sliding_window": 128,
       "default_kv_precision": "fp8",
-      "notes": "Preenchido a partir do config de referência do gpt-oss-120b: 36 camadas, GQA com 8 KV heads, head_dim 64, max_position_embeddings 131072 e padrão híbrido (full+sliding) com sliding_window 128."
+      "total_params_b": 120.0,
+      "active_params_b": null,
+      "weights_memory_gib_fp16": 240.0,
+      "weights_memory_gib_fp8": 120.0,
+      "weights_memory_gib_int8": 120.0,
+      "weights_memory_gib_int4": 60.0,
+      "default_weights_precision": "fp8",
+      "notes": "Modelo 120B parâmetros. GQA com 8 KV heads, head_dim 64, max_position_embeddings 131072 e padrão híbrido (full+sliding) com sliding_window 128. Memória de pesos: FP16=240GiB, FP8/INT8=120GiB, INT4=60GiB."
     },
     {
       "name": "opt-oss-20b",
@@ -24,7 +31,14 @@
       "hybrid_sliding_layers": 12,
       "sliding_window": 128,
       "default_kv_precision": "fp8",
-      "notes": "Preenchido a partir do config do gpt-oss 20B (safeguard 20B): 24 camadas, 8 KV heads, max_position_embeddings 131072, lista de attention_types contendo sliding_attention e full_attention."
+      "total_params_b": 20.0,
+      "active_params_b": null,
+      "weights_memory_gib_fp16": 40.0,
+      "weights_memory_gib_fp8": 20.0,
+      "weights_memory_gib_int8": 20.0,
+      "weights_memory_gib_int4": 10.0,
+      "default_weights_precision": "fp8",
+      "notes": "Modelo 20B parâmetros. 24 camadas, 8 KV heads, max_position_embeddings 131072, padrão híbrido (full+sliding). Memória de pesos: FP16=40GiB, FP8/INT8=20GiB, INT4=10GiB."
     }
   ]
 }
