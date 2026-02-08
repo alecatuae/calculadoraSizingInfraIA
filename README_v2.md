@@ -11,6 +11,7 @@ Sistema profissional de dimensionamento de infraestrutura para inferência de La
 - ✅ **3 Cenários Obrigatórios**: MÍNIMO, RECOMENDADO e IDEAL
 - ✅ **Alertas e Riscos Automatizados**: Validações operacionais
 - ✅ **JSON Estruturado**: Saída completa com rationale para integração
+- ✅ **Relatório Executivo**: Formato especializado para diretoria e C-level
 
 ---
 
@@ -98,7 +99,9 @@ python3 sizing.py \
 
 ## 📊 Formato de Saída
 
-### Relatório em Texto (stdout)
+### 1. Relatório em Texto Técnico (stdout)
+
+Formato detalhado para engenheiros e arquitetos:
 
 ```
 ====================================================================================================
@@ -174,7 +177,36 @@ CENÁRIO: MÍNIMO
 [2] AVISO: kv_precision=fp16 usa 2 bytes/elemento. Considere fp8...
 ```
 
-### JSON Estruturado (stdout final)
+### 2. Relatório Executivo (para Diretoria e C-level)
+
+Formato especializado com linguagem estratégica, orientado à decisão:
+
+```bash
+python3 sizing.py \
+  --model opt-oss-120b \
+  --server dgx300 \
+  --storage profile_default \
+  --concurrency 1000 \
+  --effective-context 131072 \
+  --executive-report \
+  --output-markdown-file executive_report.md
+```
+
+**Estrutura:**
+- ✅ Sumário Executivo (1 página)
+- ✅ Cenários apresentados primeiro (tabela comparativa)
+- ✅ Resultados em tabelas (não texto corrido)
+- ✅ Racional de cálculo em formato de tabela
+- ✅ Análise comparativa com CapEx relativo
+- ✅ Principais riscos e alertas (bullets executivos)
+- ✅ Recomendação final clara e acionável
+- ✅ Dicionário de parâmetros (última seção)
+
+**Público-alvo:** Diretoria, VP de Tecnologia, Comitê Executivo
+
+**Documentação completa:** `EXECUTIVE_REPORT_GUIDE.md`
+
+### 3. JSON Estruturado (stdout final)
 
 ```json
 {
@@ -416,6 +448,8 @@ O sistema gera avisos automáticos para:
 
 # Output
 --output-json-file FILE          # Salvar JSON em arquivo
+--output-markdown-file FILE      # Salvar relatório Markdown
+--executive-report               # Gerar relatório executivo (para diretoria)
 --json-only                      # Apenas JSON, sem relatório texto
 --verbose                        # Mais detalhes
 ```
@@ -466,10 +500,23 @@ python3 test_sizing.py
 | Alertas automatizados | Básico | ✅ Avançado |
 | JSON com rationale | ❌ | ✅ |
 | Explicação operacional | ❌ | ✅ |
+| Relatório executivo | ❌ | ✅ |
 
 ---
 
-## 📞 Suporte
+## 📞 Suporte e Documentação
+
+### Documentação Completa
+
+- **README_v2.md** (este arquivo): Visão geral e guia de uso
+- **QUICKREF.md**: Referência rápida de comandos e parâmetros
+- **EXECUTIVE_REPORT_GUIDE.md**: Guia completo do relatório executivo
+- **SCENARIO_GUIDE.md**: Como escolher entre os 3 cenários
+- **USE_CASES.md**: Casos de uso reais e exemplos
+- **FLOWCHART.md**: Diagramas de fluxo do sistema
+- **VERSION_2.0_SUMMARY.txt**: Sumário visual das novidades
+
+### Para Adicionar Recursos
 
 Para adicionar modelos, servidores ou perfis de storage:
 1. Edite o respectivo arquivo JSON
