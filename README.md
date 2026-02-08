@@ -328,13 +328,53 @@ O script **sempre** calcula 3 cenários automaticamente. Isso permite avaliar tr
 
 ## Saídas do Script
 
-### 1. Relatório em Texto (stdout)
+### 1. Resumo Executivo no Terminal (stdout)
 
-Formato estruturado em 4 seções:
+Saída resumida para validação rápida e decisão inicial:
+
+**Formato da Tabela:**
+
+```
+================================================================================
+RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM
+================================================================================
+
+Modelo:              opt-oss-120b
+Servidor:            dgx-b300
+Contexto Efetivo:    131,072 tokens
+Concorrência Alvo:   1,000 sessões simultâneas
+Precisão KV Cache:   FP8
+
+--------------------------------------------------------------------------------
+Cenário          Nós DGX  Energia (kW)  Rack (U)  Sessões/Nó  KV/Sessão (GiB)
+--------------------------------------------------------------------------------
+MÍNIMO                 2          29.0        20         629             2.25
+RECOMENDADO            3          43.5        30         629             2.25
+IDEAL                  5          72.5        50         584             2.25
+--------------------------------------------------------------------------------
+
+✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U) atende os requisitos com 
+  tolerância a falhas (N+1).
+
+================================================================================
+📄 Relatórios completos salvos em:
+   • Texto:  relatorios/sizing_<model>_<server>_<timestamp>.txt
+   • JSON:   relatorios/sizing_<model>_<server>_<timestamp>.json
+   • Executivo: relatorios/executive_<model>_<server>_<timestamp>.md
+```
+
+**Inclui:**
+- **Energia (kW)**: Consumo elétrico total por cenário (impacto em PDU/UPS)
+- **Rack (U)**: Espaço físico em rack necessário (densidade de datacenter)
+- **Status final**: Validação de viabilidade operacional
+
+### 2. Relatório Completo em Texto (relatorios/*.txt)
+
+Artefato formal detalhado em 4 seções:
 
 **SEÇÃO 1: Entradas**
 - Parâmetros do modelo (lidos de models.json)
-- Parâmetros do servidor (lidos de servers.json)
+- Parâmetros do servidor (lidos de servers.json, **incluindo energia e rack**)
 - Parâmetros de storage (lidos de storage.json)
 - NFRs configurados (concorrência, contexto, precisão, etc.)
 
@@ -352,18 +392,23 @@ Para cada cenário (MÍNIMO, RECOMENDADO, IDEAL):
 - Budget de HBM por nó (GiB)
 - Sessões por nó
 - Nós necessários (capacidade, com headroom, final com HA)
+- **Energia total (kW)** e consumo anual (MWh)
+- **Espaço em rack (U)** e equivalente em racks padrão (42U)
+- **Dissipação térmica (BTU/hr)** e tons de refrigeração
 
 E para cada resultado, um **Racional** explicando:
 - Fórmula usada
 - Inputs do cálculo
 - Interpretação operacional
+- **Impacto físico no datacenter**
 
 **SEÇÃO 4: Alertas e Riscos**
 - Validações automáticas (ex.: contexto excede max, precisão fp16 dobra memória)
 - Impactos operacionais
 - Recomendações
+- Alertas sobre capacidade elétrica e densidade de rack
 
-### 2. JSON Estruturado (stdout final)
+### 3. JSON Estruturado (relatorios/*.json)
 
 ```json
 {
@@ -420,17 +465,34 @@ E para cada resultado, um **Racional** explicando:
 - Análise programática de cenários
 - Export para planilhas (FinOps)
 
-### 3. Relatório Executivo (Opcional)
+### 4. Relatório Executivo (relatorios/executive_*.md)
 
-Com flag `--executive-report`, gera relatório especializado para diretoria:
+Com flag `--executive-report`, gera relatório especializado para diretoria em Markdown:
 
-- Sumário executivo (1 página)
-- Cenários apresentados primeiro (tabela comparativa)
-- Linguagem estratégica (não técnica)
-- Foco em capacidade, risco, custo e decisão
-- Recomendação final clara e acionável
+**Estrutura Executiva Obrigatória:**
 
-**Uso:** Apresentações para comitê de investimento, CFO, CTO.
+1. **Sumário Executivo**: Problema, modelo, carga, impacto em servidores/energia/datacenter
+2. **Cenários Avaliados**: Tabela comparativa (Mínimo/Recomendado/Ideal) com objetivos e riscos
+3. **Informações do Modelo**: Perfil técnico simplificado
+4. **Consumo Unitário**: KV/sessão, % HBM por sessão, energia estimada por sessão
+5. **Consumo Agregado**: Total de KV, energia (kW + MWh/ano), rack (U), térmica (BTU/hr)
+6. **Resultados por Cenário**: Tabelas individuais com **energia**, **rack** e significado operacional
+7. **Racional de Cálculo**: Tabela com fórmulas, parâmetros, suposições e significado operacional (incluindo energia e rack)
+8. **Comparação Executiva**: Tabela comparativa incluindo CapEx relativo, energia relativa
+9. **Recomendação Final**: Decisão clara com justificativa baseada em estabilidade, energia, datacenter e risco
+10. **Dicionário de Parâmetros**: Tabela com parâmetros físicos (power_kw_max, rack_units_u)
+
+**Foco Executivo:**
+- Linguagem estratégica (não acadêmica)
+- Todas as métricas em tabelas
+- **Impacto físico explícito**: Energia (kW, MWh/ano), Rack (U, racks), Térmica (BTU/hr, tons)
+- Decisão baseada em custo implícito, densidade e resiliência
+- Consumo unitário vs agregado claramente separado
+
+**Uso:** 
+- Apresentações para comitê de investimento, CFO, CTO
+- Decisões de datacenter (capacidade elétrica, densidade de rack, cooling)
+- Análise de TCO (incluindo OpEx elétrico)
 
 ---
 
@@ -442,6 +504,23 @@ Com flag `--executive-report`, gera relatório especializado para diretoria:
 - Número de nós DGX a provisionar
 - Multiplicar por custo unitário do servidor para CapEx
 - Comparar MÍNIMO vs RECOMENDADO vs IDEAL para análise de custo-benefício
+
+**`total_power_kw` (por cenário)**
+- Consumo elétrico total contínuo
+- Dimensiona PDU, UPS, contrato de energia
+- Considerar PUE (~1.4x) para cooling: total_facility_kw = total_power_kw × PUE
+- Multiplicar por 8.76 para obter MWh/ano (OpEx elétrico)
+
+**`total_rack_u` (por cenário)**
+- Espaço físico em rack necessário
+- Dividir por 42 para obter número de racks padrão
+- Adicionar ~20% para switches, PDUs, ventilação
+- Define densidade de implantação e viabilidade física
+
+**`total_heat_btu_hr` (por cenário, opcional)**
+- Dissipação térmica total
+- Dividir por 12,000 para obter tons de refrigeração
+- Dimensiona capacidade de HVAC e COP do datacenter
 
 **`sessions_per_node`**
 - Capacidade efetiva de cada nó

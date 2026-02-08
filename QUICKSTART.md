@@ -42,22 +42,33 @@ RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM
 ================================================================================
 
 Modelo:              opt-oss-120b
-Servidor:            dgx300
+Servidor:            dgx-b300
 Contexto Efetivo:    131,072 tokens
 Concorrência Alvo:   1,000 sessões simultâneas
 Precisão KV Cache:   FP8
 
 --------------------------------------------------------------------------------
-Cenário            Nós DGX   Sessões/Nó  KV/Sessão (GiB) Observação
+Cenário          Nós DGX  Energia (kW)  Rack (U)  Sessões/Nó  KV/Sessão (GiB)
 --------------------------------------------------------------------------------
-MÍNIMO                   2          629             2.25 Risco alto, sem HA
-RECOMENDADO              3          629             2.25 ✓ Produção (N+1)
-IDEAL                    5          584             2.25 Máxima resiliência (N+2)
+MÍNIMO                 2          29.0        20         629             2.25
+RECOMENDADO            3          43.5        30         629             2.25
+IDEAL                  5          72.5        50         584             2.25
 --------------------------------------------------------------------------------
 
-✓ Cenário RECOMENDADO (3 nós) atende os requisitos com tolerância a falhas (N+1).
+✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U) atende os requisitos com 
+  tolerância a falhas (N+1).
 
 ================================================================================
+📄 Relatórios completos salvos em:
+   • Texto:  relatorios/sizing_opt-oss-120b_dgx-b300_<timestamp>.txt
+   • JSON:   relatorios/sizing_opt-oss-120b_dgx-b300_<timestamp>.json
+   • Executivo: relatorios/executive_opt-oss-120b_dgx-b300_<timestamp>.md
+                (se usar --executive-report)
+```
+
+**O que mudou:**
+- Agora exibe **Energia (kW)** e **Rack (U)** por cenário
+- Essencial para decisões de datacenter (capacidade elétrica, densidade)
 📄 Relatórios completos salvos em:
    • Texto:  relatorios/sizing_opt-oss-120b_dgx300_20260208_134031.txt
    • JSON:   relatorios/sizing_opt-oss-120b_dgx300_20260208_134031.json
@@ -159,12 +170,12 @@ python3 sizing.py \
 
 ### 4. Gerar Relatório Executivo Adicional
 
-**Objetivo:** Criar relatório formatado para apresentação a CFO/CTO (além dos relatórios padrão).
+**Objetivo:** Criar relatório formatado para apresentação a CFO/CTO/Diretoria (além dos relatórios padrão).
 
 ```bash
 python3 sizing.py \
   --model opt-oss-120b \
-  --server dgx300 \
+  --server dgx-b300 \
   --storage profile_default \
   --concurrency 1000 \
   --effective-context 131072 \
@@ -176,6 +187,14 @@ python3 sizing.py \
 - `relatorios/sizing_<modelo>_<servidor>_<timestamp>.json` (padrão)
 - `relatorios/executive_<modelo>_<servidor>_<timestamp>.md` (executivo) ← Adicional
 
+**O relatório executivo inclui:**
+- Sumário executivo com impacto em servidores, energia e datacenter
+- Consumo unitário por sessão (KV cache, % HBM, energia estimada)
+- Consumo agregado total (KV, energia kW + MWh/ano, rack U, dissipação BTU/hr)
+- Resultados detalhados por cenário com métricas de datacenter
+- Comparação executiva (incluindo CapEx relativo, energia relativa)
+- Recomendação baseada em estabilidade, energia, densidade e risco
+
 ---
 
 ## Interpretação Rápida
@@ -184,6 +203,10 @@ python3 sizing.py \
 
 **1. Tabela de Cenários**
 - `Nós DGX`: Número de servidores necessários para cada cenário
+- `Energia (kW)`: Consumo elétrico total contínuo → dimensiona PDU/UPS/contrato
+- `Rack (U)`: Espaço físico necessário → densidade de datacenter (42U/rack padrão)
+- `Sessões/Nó`: Capacidade de cada servidor
+- `KV/Sessão (GiB)`: Memória consumida por cada sessão ativa
 - `Sessões/Nó`: Capacidade efetiva de cada servidor
 - `KV/Sessão (GiB)`: Memória GPU necessária por sessão ativa
 - `Observação`: Classificação de risco/resiliência
