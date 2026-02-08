@@ -1,0 +1,668 @@
+{
+  "inputs": {
+    "model": {
+      "name": "opt-oss-120b",
+      "num_layers": 36,
+      "num_key_value_heads": 8,
+      "head_dim": 64,
+      "max_position_embeddings": 131072,
+      "attention_pattern": "hybrid",
+      "hybrid_full_layers": 18,
+      "hybrid_sliding_layers": 18,
+      "sliding_window": 128,
+      "default_kv_precision": "fp8"
+    },
+    "server": {
+      "name": "dgx-b300",
+      "gpus": 8,
+      "hbm_per_gpu_gb": 288,
+      "total_hbm_gb": 2304,
+      "total_hbm_gib": 2145.77,
+      "nvlink_bandwidth_tbps": 14.4,
+      "system_memory_tb": 2
+    },
+    "storage": {
+      "name": "profile_default",
+      "type": "nvme_local",
+      "iops_read": 1000000,
+      "iops_write": 800000,
+      "throughput_read_gbps": 28,
+      "throughput_write_gbps": 25,
+      "latency_read_ms_p99": 0.15,
+      "latency_write_ms_p99": 0.2
+    },
+    "nfr": {
+      "concurrency": 1000,
+      "effective_context": 131072,
+      "kv_precision": "fp8",
+      "kv_budget_ratio": 0.7,
+      "runtime_overhead_gib": 120,
+      "peak_headroom_ratio": 0.2
+    }
+  },
+  "parameter_dictionary": {
+    "num_layers": {
+      "description": "Número total de camadas (layers) do transformer no modelo LLM. Cada camada possui seu próprio conjunto de tensores Key e Value no KV cache.",
+      "source": "Parâmetro fixo da arquitetura do modelo, definido em models.json. Não pode ser alterado em runtime.",
+      "importance": "Impacta linearmente o tamanho do KV cache. Modelos com mais camadas (ex: 36 vs 24) consomem proporcionalmente mais memória GPU para armazenar o histórico de atenção.",
+      "common_errors": "Erro comum: Confundir num_layers com num_hidden_layers ou contar apenas encoder/decoder. Deve ser o total de camadas que mantêm KV cache."
+    },
+    "num_key_value_heads": {
+      "description": "Número de cabeças (heads) de atenção para Key e Value. Em GQA (Grouped Query Attention), este valor pode ser menor que o número de query heads.",
+      "source": "Parâmetro fixo da arquitetura do modelo (models.json). Modelos modernos usam GQA para reduzir KV cache.",
+      "importance": "Impacta diretamente o tamanho do KV cache. Menos KV heads = menos memória. GQA com 8 KV heads vs 32 representa redução de 4x na memória de KV.",
+      "common_errors": "Erro comum: Usar num_attention_heads (query heads) em vez de num_key_value_heads. Em GQA esses valores são diferentes e isso causa superestimação de 4-8x na memória."
+    },
+    "head_dim": {
+      "description": "Dimensionalidade de cada cabeça de atenção (ex: 64, 128). Tamanho do vetor de embedding por head.",
+      "source": "Parâmetro fixo da arquitetura do modelo (models.json). Geralmente 64 ou 128.",
+      "importance": "Multiplica linearmente o tamanho do KV cache. head_dim=128 vs 64 dobra a memória necessária por head.",
+      "common_errors": "Erro comum: Confundir head_dim com hidden_size. hidden_size = num_attention_heads × head_dim. Usar hidden_size diretamente causa erro massivo."
+    },
+    "max_position_embeddings": {
+      "description": "Comprimento máximo de contexto (em tokens) que o modelo foi treinado para suportar. Limite arquitetural do positional embedding.",
+      "source": "Parâmetro fixo da arquitetura do modelo (models.json). Definido no training.",
+      "importance": "Define o limite superior para effective_context. Tentar usar contextos maiores causa comportamento indefinido (extrapolação de posições).",
+      "common_errors": "Erro comum: Ignorar este limite e usar effective_context > max_position_embeddings. Isso leva a resultados incorretos ou crashes em runtime."
+    },
+    "attention_pattern": {
+      "description": "Padrão de atenção usado pelo modelo: 'full' (todas camadas atendem contexto completo), 'sliding' (janela deslizante), ou 'hybrid' (mix de full e sliding).",
+      "source": "Parâmetro fixo da arquitetura do modelo (models.json). Define como o modelo processa contexto longo.",
+      "importance": "Crítico para cálculo correto de KV cache. Sliding window pode reduzir KV cache drasticamente (ex: 128k context com window=128 usa 1000x menos memória que full attention).",
+      "common_errors": "Erro comum: Assumir 'full' para todos os modelos. Modelos modernos usam hybrid/sliding. Usar 'full' quando modelo é 'sliding' superestima memória em ordens de magnitude."
+    },
+    "sliding_window": {
+      "description": "Tamanho da janela de atenção deslizante (em tokens) para camadas com sliding attention. Apenas os últimos N tokens são atendidos.",
+      "source": "Parâmetro fixo da arquitetura do modelo (models.json), aplicável apenas se attention_pattern='sliding' ou 'hybrid'.",
+      "importance": "Controla o tamanho do KV cache para camadas sliding. Sliding window pequeno (128) vs contexto longo (128k) reduz memória por camada em 1000x.",
+      "common_errors": "Erro comum: Não usar sliding_window para camadas sliding, assumindo contexto completo. Isso causa overestimation massiva de memória e sizing incorreto."
+    },
+    "effective_context": {
+      "description": "Tamanho de contexto (em tokens) que sua aplicação efetivamente usará em runtime. Diferente de max_position_embeddings (limite do modelo).",
+      "source": "NFR (Non-Functional Requirement) do produto/aplicação. Você define baseado no use case (ex: 4k para chat, 128k para análise de documentos).",
+      "importance": "Impacta diretamente o tamanho do KV cache por sessão. Contexto maior = mais memória = menos sessões por nó. Definir incorretamente causa over/under-provisioning.",
+      "common_errors": "Erro comum: Usar max_position_embeddings como effective_context. Isso superestima memória se aplicação usa contextos menores, ou causa problemas se excede o limite do modelo."
+    },
+    "kv_precision": {
+      "description": "Precisão numérica usada para armazenar tensores Key e Value: fp8/int8 (1 byte/elemento) ou fp16/bf16 (2 bytes/elemento).",
+      "source": "Parâmetro de runtime configurável. fp8 é recomendado para economia de memória com mínima perda de qualidade.",
+      "importance": "Impacta diretamente (2x) o tamanho do KV cache. fp16 vs fp8 dobra a memória necessária e reduz pela metade o número de sessões por nó.",
+      "common_errors": "Erro comum: Usar fp16 por default sem testar fp8. Muitos casos fp8 tem qualidade equivalente, mas fp16 dobra o custo de infraestrutura desnecessariamente."
+    },
+    "concurrency": {
+      "description": "Número de sessões/requisições simultâneas (concurrent users) que o sistema deve suportar. Métrica de throughput.",
+      "source": "NFR do produto, baseado em projeções de tráfego e SLA. Pode vir de análise de uso, teste de carga, ou requisitos de negócio.",
+      "importance": "Define quantos nós você precisa. Concurrency mal estimada causa: subdimensionamento (SLA quebrado, throttling) ou superdimensionamento (desperdício de capex).",
+      "common_errors": "Erro comum: Confundir concurrency (sessões simultâneas) com RPS (requests per second). Concurrency = sessões ativas ao mesmo tempo. RPS considera latência."
+    },
+    "kv_budget_ratio": {
+      "description": "Fração da HBM total alocada para KV cache (ex: 0.70 = 70%). O restante é para modelo, ativações, overhead de runtime.",
+      "source": "Parâmetro de tuning/configuração. Default 0.70 é conservador. Pode ser ajustado baseado em profiling real.",
+      "importance": "Define quantas sessões cabem por nó. Budget muito alto (>0.80) causa fragmentação e instabilidade. Budget muito baixo (<0.50) desperdiça HBM.",
+      "common_errors": "Erro comum: Alocar 100% da HBM para KV cache, ignorando overhead do modelo, ativações, e buffers do runtime. Isso causa OOM (Out of Memory) em produção."
+    },
+    "runtime_overhead_gib": {
+      "description": "Memória GPU (GiB) reservada para modelo (pesos), ativações de computação, e buffers do runtime de inferência.",
+      "source": "Estimativa baseada em tamanho do modelo e framework. Pode ser medido via profiling. Default conservador: 80-150 GiB para modelos grandes.",
+      "importance": "Subtrai da HBM disponível antes de calcular budget de KV. Subestimar causa OOM. Superestimar desperdiça capacidade.",
+      "common_errors": "Erro comum: Usar overhead muito baixo (<50 GiB) para modelos grandes (>100B parâmetros). Modelo 120B em fp16 sozinho já ocupa ~240 GiB."
+    },
+    "peak_headroom_ratio": {
+      "description": "Fração adicional de capacidade reservada para picos de tráfego (ex: 0.20 = 20% acima da concurrency nominal).",
+      "source": "NFR de SRE, baseado em análise de sazonalidade e requisitos de SLO. Típico: 10-30%.",
+      "importance": "Garante que sistema aguenta picos sem degradação de SLO. Sem headroom, qualquer pico causa throttling ou violação de SLA.",
+      "common_errors": "Erro comum: Não ter headroom (0%) em produção. Tráfego sempre tem variação. Outro erro: headroom excessivo (>50%) que desperdiça capex."
+    },
+    "ha_mode": {
+      "description": "Modo de alta disponibilidade: 'none' (sem redundância), 'n+1' (tolera falha de 1 nó), 'n+2' (tolera 2 nós).",
+      "source": "NFR de disponibilidade, baseado em SLA. Produção crítica geralmente requer no mínimo N+1.",
+      "importance": "Define quantos nós extras alocar para redundância. N+1 garante que falha de 1 nó não quebra SLA. Sem HA, falha de nó causa degradação imediata.",
+      "common_errors": "Erro comum: Não ter HA (none) em produção com SLA > 99%. Falha de hardware é inevitável. Outro erro: N+2 quando N+1 já atende, desperdiçando capex."
+    }
+  },
+  "scenarios": {
+    "minimum": {
+      "name": "MÍNIMO",
+      "configuration": {
+        "peak_headroom_ratio": 0.0,
+        "ha_mode": "none",
+        "ha_extra_nodes": 0,
+        "kv_budget_ratio": 0.7
+      },
+      "results": {
+        "kv_per_session_gib": 2.2522,
+        "kv_total_gib": 2252.2,
+        "kv_total_tib": 2.1994,
+        "hbm_total_gib": 2145.77,
+        "kv_budget_gib": 1407.54,
+        "sessions_per_node": 624,
+        "nodes_capacity": 2,
+        "nodes_with_headroom": 2,
+        "nodes_final": 2,
+        "fixed_model_gib": 15.0,
+        "vram_per_session_gib": 2.2522,
+        "runtime_overhead_gib": 120,
+        "budget_for_sessions_gib": 2010.77,
+        "sessions_budget_gib": 1407.54,
+        "sessions_per_node_effective": 500,
+        "vram_total_node_at_limit_gib": 1540.37,
+        "vram_total_node_effective_gib": 1261.1,
+        "hbm_utilization_ratio_effective": 0.5877,
+        "weights_estimated": false,
+        "total_power_kw": 29.0,
+        "total_rack_u": 20,
+        "total_heat_btu_hr": 98952.0
+      },
+      "rationale": {
+        "fixed_model_gib": {
+          "formula": "fixed_model_gib = (weights_gib / (TP × PP)) × replicas_per_node",
+          "inputs": {
+            "weights_gib": 120.0,
+            "weights_precision": "fp8",
+            "replicas_per_node": 1,
+            "tensor_parallel": 8,
+            "pipeline_parallel": 1,
+            "estimated": false
+          },
+          "explanation": "Memória dos pesos do modelo: 120.0 GiB (real) em precisão fp8. Com TP=8 e PP=1, pesos são distribuídos. Cada nó carrega 1 réplica(s), resultando em 15.0 GiB de memória fixa por nó."
+        },
+        "kv_per_session_gib": {
+          "formula": "Hybrid attention: 18 full + 18 sliding\nFull: 2 × 131072 × 8 × 64 × 1 × 18\nSliding: 2 × 128 × 8 × 64 × 1 × 18\ntotal = full + sliding",
+          "inputs": {
+            "model": "opt-oss-120b",
+            "num_layers": 36,
+            "num_kv_heads": 8,
+            "head_dim": 64,
+            "attention_pattern": "hybrid",
+            "effective_context": 131072,
+            "original_context": null,
+            "sliding_window": 128,
+            "kv_precision": "fp8",
+            "bytes_per_element": 1,
+            "total_bytes": 2418278400
+          },
+          "explanation": "KV cache armazena tensores Key e Value de todas as camadas para o contexto da sessão. Cada posição no contexto mantém 8 heads × 64 dims × 1 bytes/elem = 512 bytes por posição (K+V separados, daí fator 2). Modelo com attention_pattern='hybrid' usa contexto efetivo diferente por camada. Total de 2.25 GiB por sessão ativa."
+        },
+        "vram_per_session_gib": {
+          "formula": "vram_per_session_gib = kv_per_session_gib",
+          "inputs": {
+            "kv_per_session_gib": 2.2522,
+            "kv_precision": "fp8"
+          },
+          "explanation": "VRAM consumida por cada sessão ativa: 2.25 GiB de KV cache. Esta memória é variável e escala linearmente com o número de sessões simultâneas."
+        },
+        "kv_total_gib": {
+          "formula": "kv_total_gib = vram_per_session_gib × concurrency",
+          "inputs": {
+            "vram_per_session_gib": 2.2522,
+            "concurrency": 1000
+          },
+          "explanation": "KV cache total necessário para 1,000 sessões simultâneas: 2.20 TiB (2252.2 GiB) distribuídos entre os nós."
+        },
+        "hbm_total_gib": {
+          "formula": "hbm_total_gib = total_hbm_gb × (10^9 / 2^30)",
+          "inputs": {
+            "server": "dgx-b300",
+            "gpus": 8,
+            "hbm_per_gpu_gb": 288,
+            "total_hbm_gb": 2304,
+            "gb_to_gib_factor": 0.9313225746154785
+          },
+          "explanation": "Servidor dgx-b300: 8 GPUs × 288 GB/GPU = 2304 GB = 2145.8 GiB de HBM total por nó."
+        },
+        "budget_for_sessions_gib": {
+          "formula": "budget_for_sessions_gib = hbm_total_gib - fixed_model_gib - runtime_overhead_gib",
+          "inputs": {
+            "hbm_total_gib": 2145.77,
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120
+          },
+          "explanation": "Budget bruto disponível para sessões: 2145.8 GiB (HBM total) - 15.0 GiB (pesos) - 120 GiB (overhead) = 2010.8 GiB. Este é o espaço restante antes de aplicar ratio operacional."
+        },
+        "sessions_budget_gib": {
+          "formula": "sessions_budget_gib = budget_for_sessions_gib × kv_budget_ratio",
+          "inputs": {
+            "budget_for_sessions_gib": 2010.77,
+            "kv_budget_ratio": 0.7
+          },
+          "explanation": "Budget operacional para sessões: 2010.8 GiB × 70% = 1407.5 GiB. Os restantes 30% (603.2 GiB) ficam livres para fragmentação, picos de memória e estabilidade."
+        },
+        "sessions_per_node": {
+          "formula": "sessions_per_node = floor(sessions_budget_gib / vram_per_session_gib)",
+          "inputs": {
+            "sessions_budget_gib": 1407.54,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "Capacidade de sessões por nó: 1407.5 GiB / 2.25 GiB/sessão = 624 sessões. Este é o limite máximo de concorrência por servidor, determinado puramente por memória disponível para KV cache."
+        },
+        "nodes_capacity": {
+          "formula": "nodes_capacity = ceil(concurrency / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "sessions_per_node": 624
+          },
+          "explanation": "Nós necessários para capacidade pura: ceil(1,000 / 624) = 2 nós."
+        },
+        "nodes_with_headroom": {
+          "formula": "nodes_with_headroom = ceil(concurrency × (1 + peak_headroom_ratio) / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "peak_headroom_ratio": 0.0,
+            "concurrency_with_headroom": 1000.0,
+            "sessions_per_node": 624
+          },
+          "explanation": "Nós com headroom de 0% para picos: 2 nós."
+        },
+        "nodes_final": {
+          "formula": "nodes_final = nodes_with_headroom + ha_extra_nodes",
+          "inputs": {
+            "nodes_with_headroom": 2,
+            "ha_extra_nodes": 0,
+            "ha_mode": "none"
+          },
+          "explanation": "Nós finais com HA: 2 + 0 = 2 nós."
+        },
+        "vram_total_node_effective_gib": {
+          "formula": "vram_total = fixed_model_gib + runtime_overhead_gib + (sessions_effective × vram_per_session)",
+          "inputs": {
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120,
+            "sessions_per_node_effective": 500,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "VRAM total por nó operando: 15.0 GiB (pesos) + 120 GiB (overhead) + (500 sessões × 2.25 GiB) = 1261.1 GiB. Utilização de HBM: 58.8%."
+        },
+        "total_power_kw": {
+          "formula": "total_power_kw = nodes_final × power_kw_max",
+          "inputs": {
+            "nodes_final": 2,
+            "power_kw_max": 14.5
+          },
+          "explanation": "Energia total: 2 nós × 14.5 kW = 29.0 kW. Dimensiona PDU, UPS e contrato de energia. Considere PUE ~1.4x para cooling."
+        },
+        "total_rack_u": {
+          "formula": "total_rack_u = nodes_final × rack_units_u",
+          "inputs": {
+            "nodes_final": 2,
+            "rack_units_u": 10
+          },
+          "explanation": "Rack total: 2 nós × 10U = 20U (0.5 racks padrão). Adicione ~20% para infra."
+        },
+        "total_heat_btu_hr": {
+          "formula": "total_heat_btu_hr = nodes_final × heat_output_btu_hr_max",
+          "inputs": {
+            "nodes_final": 2,
+            "heat_output_btu_hr_max": 49476.054
+          },
+          "explanation": "Dissipação térmica: 98,952 BTU/hr = 8.2 tons de refrigeração."
+        }
+      },
+      "warnings": [
+        "ALERTA: Contexto longo (131,072 tokens) aumenta TTFT e pressiona I/O."
+      ]
+    },
+    "recommended": {
+      "name": "RECOMENDADO",
+      "configuration": {
+        "peak_headroom_ratio": 0.2,
+        "ha_mode": "n+1",
+        "ha_extra_nodes": 1,
+        "kv_budget_ratio": 0.7
+      },
+      "results": {
+        "kv_per_session_gib": 2.2522,
+        "kv_total_gib": 2252.2,
+        "kv_total_tib": 2.1994,
+        "hbm_total_gib": 2145.77,
+        "kv_budget_gib": 1407.54,
+        "sessions_per_node": 624,
+        "nodes_capacity": 2,
+        "nodes_with_headroom": 2,
+        "nodes_final": 3,
+        "fixed_model_gib": 15.0,
+        "vram_per_session_gib": 2.2522,
+        "runtime_overhead_gib": 120,
+        "budget_for_sessions_gib": 2010.77,
+        "sessions_budget_gib": 1407.54,
+        "sessions_per_node_effective": 334,
+        "vram_total_node_at_limit_gib": 1540.37,
+        "vram_total_node_effective_gib": 887.23,
+        "hbm_utilization_ratio_effective": 0.4135,
+        "weights_estimated": false,
+        "total_power_kw": 43.5,
+        "total_rack_u": 30,
+        "total_heat_btu_hr": 148428.0
+      },
+      "rationale": {
+        "fixed_model_gib": {
+          "formula": "fixed_model_gib = (weights_gib / (TP × PP)) × replicas_per_node",
+          "inputs": {
+            "weights_gib": 120.0,
+            "weights_precision": "fp8",
+            "replicas_per_node": 1,
+            "tensor_parallel": 8,
+            "pipeline_parallel": 1,
+            "estimated": false
+          },
+          "explanation": "Memória dos pesos do modelo: 120.0 GiB (real) em precisão fp8. Com TP=8 e PP=1, pesos são distribuídos. Cada nó carrega 1 réplica(s), resultando em 15.0 GiB de memória fixa por nó."
+        },
+        "kv_per_session_gib": {
+          "formula": "Hybrid attention: 18 full + 18 sliding\nFull: 2 × 131072 × 8 × 64 × 1 × 18\nSliding: 2 × 128 × 8 × 64 × 1 × 18\ntotal = full + sliding",
+          "inputs": {
+            "model": "opt-oss-120b",
+            "num_layers": 36,
+            "num_kv_heads": 8,
+            "head_dim": 64,
+            "attention_pattern": "hybrid",
+            "effective_context": 131072,
+            "original_context": null,
+            "sliding_window": 128,
+            "kv_precision": "fp8",
+            "bytes_per_element": 1,
+            "total_bytes": 2418278400
+          },
+          "explanation": "KV cache armazena tensores Key e Value de todas as camadas para o contexto da sessão. Cada posição no contexto mantém 8 heads × 64 dims × 1 bytes/elem = 512 bytes por posição (K+V separados, daí fator 2). Modelo com attention_pattern='hybrid' usa contexto efetivo diferente por camada. Total de 2.25 GiB por sessão ativa."
+        },
+        "vram_per_session_gib": {
+          "formula": "vram_per_session_gib = kv_per_session_gib",
+          "inputs": {
+            "kv_per_session_gib": 2.2522,
+            "kv_precision": "fp8"
+          },
+          "explanation": "VRAM consumida por cada sessão ativa: 2.25 GiB de KV cache. Esta memória é variável e escala linearmente com o número de sessões simultâneas."
+        },
+        "kv_total_gib": {
+          "formula": "kv_total_gib = vram_per_session_gib × concurrency",
+          "inputs": {
+            "vram_per_session_gib": 2.2522,
+            "concurrency": 1000
+          },
+          "explanation": "KV cache total necessário para 1,000 sessões simultâneas: 2.20 TiB (2252.2 GiB) distribuídos entre os nós."
+        },
+        "hbm_total_gib": {
+          "formula": "hbm_total_gib = total_hbm_gb × (10^9 / 2^30)",
+          "inputs": {
+            "server": "dgx-b300",
+            "gpus": 8,
+            "hbm_per_gpu_gb": 288,
+            "total_hbm_gb": 2304,
+            "gb_to_gib_factor": 0.9313225746154785
+          },
+          "explanation": "Servidor dgx-b300: 8 GPUs × 288 GB/GPU = 2304 GB = 2145.8 GiB de HBM total por nó."
+        },
+        "budget_for_sessions_gib": {
+          "formula": "budget_for_sessions_gib = hbm_total_gib - fixed_model_gib - runtime_overhead_gib",
+          "inputs": {
+            "hbm_total_gib": 2145.77,
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120
+          },
+          "explanation": "Budget bruto disponível para sessões: 2145.8 GiB (HBM total) - 15.0 GiB (pesos) - 120 GiB (overhead) = 2010.8 GiB. Este é o espaço restante antes de aplicar ratio operacional."
+        },
+        "sessions_budget_gib": {
+          "formula": "sessions_budget_gib = budget_for_sessions_gib × kv_budget_ratio",
+          "inputs": {
+            "budget_for_sessions_gib": 2010.77,
+            "kv_budget_ratio": 0.7
+          },
+          "explanation": "Budget operacional para sessões: 2010.8 GiB × 70% = 1407.5 GiB. Os restantes 30% (603.2 GiB) ficam livres para fragmentação, picos de memória e estabilidade."
+        },
+        "sessions_per_node": {
+          "formula": "sessions_per_node = floor(sessions_budget_gib / vram_per_session_gib)",
+          "inputs": {
+            "sessions_budget_gib": 1407.54,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "Capacidade de sessões por nó: 1407.5 GiB / 2.25 GiB/sessão = 624 sessões. Este é o limite máximo de concorrência por servidor, determinado puramente por memória disponível para KV cache."
+        },
+        "nodes_capacity": {
+          "formula": "nodes_capacity = ceil(concurrency / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "sessions_per_node": 624
+          },
+          "explanation": "Nós necessários para capacidade pura: ceil(1,000 / 624) = 2 nós."
+        },
+        "nodes_with_headroom": {
+          "formula": "nodes_with_headroom = ceil(concurrency × (1 + peak_headroom_ratio) / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "peak_headroom_ratio": 0.2,
+            "concurrency_with_headroom": 1200.0,
+            "sessions_per_node": 624
+          },
+          "explanation": "Nós com headroom de 20% para picos: 2 nós."
+        },
+        "nodes_final": {
+          "formula": "nodes_final = nodes_with_headroom + ha_extra_nodes",
+          "inputs": {
+            "nodes_with_headroom": 2,
+            "ha_extra_nodes": 1,
+            "ha_mode": "n+1"
+          },
+          "explanation": "Nós finais com HA: 2 + 1 = 3 nós."
+        },
+        "vram_total_node_effective_gib": {
+          "formula": "vram_total = fixed_model_gib + runtime_overhead_gib + (sessions_effective × vram_per_session)",
+          "inputs": {
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120,
+            "sessions_per_node_effective": 334,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "VRAM total por nó operando: 15.0 GiB (pesos) + 120 GiB (overhead) + (334 sessões × 2.25 GiB) = 887.2 GiB. Utilização de HBM: 41.3%."
+        },
+        "total_power_kw": {
+          "formula": "total_power_kw = nodes_final × power_kw_max",
+          "inputs": {
+            "nodes_final": 3,
+            "power_kw_max": 14.5
+          },
+          "explanation": "Energia total: 3 nós × 14.5 kW = 43.5 kW. Dimensiona PDU, UPS e contrato de energia. Considere PUE ~1.4x para cooling."
+        },
+        "total_rack_u": {
+          "formula": "total_rack_u = nodes_final × rack_units_u",
+          "inputs": {
+            "nodes_final": 3,
+            "rack_units_u": 10
+          },
+          "explanation": "Rack total: 3 nós × 10U = 30U (0.7 racks padrão). Adicione ~20% para infra."
+        },
+        "total_heat_btu_hr": {
+          "formula": "total_heat_btu_hr = nodes_final × heat_output_btu_hr_max",
+          "inputs": {
+            "nodes_final": 3,
+            "heat_output_btu_hr_max": 49476.054
+          },
+          "explanation": "Dissipação térmica: 148,428 BTU/hr = 12.4 tons de refrigeração."
+        }
+      },
+      "warnings": [
+        "ALERTA: Contexto longo (131,072 tokens) aumenta TTFT e pressiona I/O."
+      ]
+    },
+    "ideal": {
+      "name": "IDEAL",
+      "configuration": {
+        "peak_headroom_ratio": 0.3,
+        "ha_mode": "n+2",
+        "ha_extra_nodes": 2,
+        "kv_budget_ratio": 0.65
+      },
+      "results": {
+        "kv_per_session_gib": 2.2522,
+        "kv_total_gib": 2252.2,
+        "kv_total_tib": 2.1994,
+        "hbm_total_gib": 2145.77,
+        "kv_budget_gib": 1307.0,
+        "sessions_per_node": 580,
+        "nodes_capacity": 2,
+        "nodes_with_headroom": 3,
+        "nodes_final": 5,
+        "fixed_model_gib": 15.0,
+        "vram_per_session_gib": 2.2522,
+        "runtime_overhead_gib": 120,
+        "budget_for_sessions_gib": 2010.77,
+        "sessions_budget_gib": 1307.0,
+        "sessions_per_node_effective": 200,
+        "vram_total_node_at_limit_gib": 1441.27,
+        "vram_total_node_effective_gib": 585.44,
+        "hbm_utilization_ratio_effective": 0.2728,
+        "weights_estimated": false,
+        "total_power_kw": 72.5,
+        "total_rack_u": 50,
+        "total_heat_btu_hr": 247380.0
+      },
+      "rationale": {
+        "fixed_model_gib": {
+          "formula": "fixed_model_gib = (weights_gib / (TP × PP)) × replicas_per_node",
+          "inputs": {
+            "weights_gib": 120.0,
+            "weights_precision": "fp8",
+            "replicas_per_node": 1,
+            "tensor_parallel": 8,
+            "pipeline_parallel": 1,
+            "estimated": false
+          },
+          "explanation": "Memória dos pesos do modelo: 120.0 GiB (real) em precisão fp8. Com TP=8 e PP=1, pesos são distribuídos. Cada nó carrega 1 réplica(s), resultando em 15.0 GiB de memória fixa por nó."
+        },
+        "kv_per_session_gib": {
+          "formula": "Hybrid attention: 18 full + 18 sliding\nFull: 2 × 131072 × 8 × 64 × 1 × 18\nSliding: 2 × 128 × 8 × 64 × 1 × 18\ntotal = full + sliding",
+          "inputs": {
+            "model": "opt-oss-120b",
+            "num_layers": 36,
+            "num_kv_heads": 8,
+            "head_dim": 64,
+            "attention_pattern": "hybrid",
+            "effective_context": 131072,
+            "original_context": null,
+            "sliding_window": 128,
+            "kv_precision": "fp8",
+            "bytes_per_element": 1,
+            "total_bytes": 2418278400
+          },
+          "explanation": "KV cache armazena tensores Key e Value de todas as camadas para o contexto da sessão. Cada posição no contexto mantém 8 heads × 64 dims × 1 bytes/elem = 512 bytes por posição (K+V separados, daí fator 2). Modelo com attention_pattern='hybrid' usa contexto efetivo diferente por camada. Total de 2.25 GiB por sessão ativa."
+        },
+        "vram_per_session_gib": {
+          "formula": "vram_per_session_gib = kv_per_session_gib",
+          "inputs": {
+            "kv_per_session_gib": 2.2522,
+            "kv_precision": "fp8"
+          },
+          "explanation": "VRAM consumida por cada sessão ativa: 2.25 GiB de KV cache. Esta memória é variável e escala linearmente com o número de sessões simultâneas."
+        },
+        "kv_total_gib": {
+          "formula": "kv_total_gib = vram_per_session_gib × concurrency",
+          "inputs": {
+            "vram_per_session_gib": 2.2522,
+            "concurrency": 1000
+          },
+          "explanation": "KV cache total necessário para 1,000 sessões simultâneas: 2.20 TiB (2252.2 GiB) distribuídos entre os nós."
+        },
+        "hbm_total_gib": {
+          "formula": "hbm_total_gib = total_hbm_gb × (10^9 / 2^30)",
+          "inputs": {
+            "server": "dgx-b300",
+            "gpus": 8,
+            "hbm_per_gpu_gb": 288,
+            "total_hbm_gb": 2304,
+            "gb_to_gib_factor": 0.9313225746154785
+          },
+          "explanation": "Servidor dgx-b300: 8 GPUs × 288 GB/GPU = 2304 GB = 2145.8 GiB de HBM total por nó."
+        },
+        "budget_for_sessions_gib": {
+          "formula": "budget_for_sessions_gib = hbm_total_gib - fixed_model_gib - runtime_overhead_gib",
+          "inputs": {
+            "hbm_total_gib": 2145.77,
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120
+          },
+          "explanation": "Budget bruto disponível para sessões: 2145.8 GiB (HBM total) - 15.0 GiB (pesos) - 120 GiB (overhead) = 2010.8 GiB. Este é o espaço restante antes de aplicar ratio operacional."
+        },
+        "sessions_budget_gib": {
+          "formula": "sessions_budget_gib = budget_for_sessions_gib × kv_budget_ratio",
+          "inputs": {
+            "budget_for_sessions_gib": 2010.77,
+            "kv_budget_ratio": 0.65
+          },
+          "explanation": "Budget operacional para sessões: 2010.8 GiB × 65% = 1307.0 GiB. Os restantes 35% (703.8 GiB) ficam livres para fragmentação, picos de memória e estabilidade."
+        },
+        "sessions_per_node": {
+          "formula": "sessions_per_node = floor(sessions_budget_gib / vram_per_session_gib)",
+          "inputs": {
+            "sessions_budget_gib": 1307.0,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "Capacidade de sessões por nó: 1307.0 GiB / 2.25 GiB/sessão = 580 sessões. Este é o limite máximo de concorrência por servidor, determinado puramente por memória disponível para KV cache."
+        },
+        "nodes_capacity": {
+          "formula": "nodes_capacity = ceil(concurrency / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "sessions_per_node": 580
+          },
+          "explanation": "Nós necessários para capacidade pura: ceil(1,000 / 580) = 2 nós."
+        },
+        "nodes_with_headroom": {
+          "formula": "nodes_with_headroom = ceil(concurrency × (1 + peak_headroom_ratio) / sessions_per_node)",
+          "inputs": {
+            "concurrency": 1000,
+            "peak_headroom_ratio": 0.3,
+            "concurrency_with_headroom": 1300.0,
+            "sessions_per_node": 580
+          },
+          "explanation": "Nós com headroom de 30% para picos: 3 nós."
+        },
+        "nodes_final": {
+          "formula": "nodes_final = nodes_with_headroom + ha_extra_nodes",
+          "inputs": {
+            "nodes_with_headroom": 3,
+            "ha_extra_nodes": 2,
+            "ha_mode": "n+2"
+          },
+          "explanation": "Nós finais com HA: 3 + 2 = 5 nós."
+        },
+        "vram_total_node_effective_gib": {
+          "formula": "vram_total = fixed_model_gib + runtime_overhead_gib + (sessions_effective × vram_per_session)",
+          "inputs": {
+            "fixed_model_gib": 15.0,
+            "runtime_overhead_gib": 120,
+            "sessions_per_node_effective": 200,
+            "vram_per_session_gib": 2.2522
+          },
+          "explanation": "VRAM total por nó operando: 15.0 GiB (pesos) + 120 GiB (overhead) + (200 sessões × 2.25 GiB) = 585.4 GiB. Utilização de HBM: 27.3%."
+        },
+        "total_power_kw": {
+          "formula": "total_power_kw = nodes_final × power_kw_max",
+          "inputs": {
+            "nodes_final": 5,
+            "power_kw_max": 14.5
+          },
+          "explanation": "Energia total: 5 nós × 14.5 kW = 72.5 kW. Dimensiona PDU, UPS e contrato de energia. Considere PUE ~1.4x para cooling."
+        },
+        "total_rack_u": {
+          "formula": "total_rack_u = nodes_final × rack_units_u",
+          "inputs": {
+            "nodes_final": 5,
+            "rack_units_u": 10
+          },
+          "explanation": "Rack total: 5 nós × 10U = 50U (1.2 racks padrão). Adicione ~20% para infra."
+        },
+        "total_heat_btu_hr": {
+          "formula": "total_heat_btu_hr = nodes_final × heat_output_btu_hr_max",
+          "inputs": {
+            "nodes_final": 5,
+            "heat_output_btu_hr_max": 49476.054
+          },
+          "explanation": "Dissipação térmica: 247,380 BTU/hr = 20.6 tons de refrigeração."
+        }
+      },
+      "warnings": [
+        "ALERTA: Contexto longo (131,072 tokens) aumenta TTFT e pressiona I/O."
+      ]
+    }
+  },
+  "alerts": [
+    "ALERTA: Contexto longo (131,072 tokens) aumenta TTFT e pressiona I/O."
+  ]
+}
