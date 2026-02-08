@@ -14,15 +14,17 @@ Guia rápido para executar o dimensionamento de infraestrutura para inferência 
 ## Execução Básica
 
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-120b \
-  --server dgx300 \
+  --server dgx-b300 \
   --storage profile_default \
   --concurrency 1000 \
   --effective-context 131072
 ```
 
 **O que faz:** Calcula quantos nós DGX B300 são necessários para sustentar 1000 sessões simultâneas com contexto de 128k tokens, usando o modelo opt-oss-120b.
+
+**✨ NOVO:** O projeto agora é modular! O script principal é `main.py`, que orquestra módulos especializados em `/sizing/`.
 
 **Output no terminal:** Resumo executivo com tabela comparativa dos 3 cenários (MÍNIMO, RECOMENDADO, IDEAL).
 
@@ -95,7 +97,7 @@ Os arquivos em `relatorios/` contêm:
 **Objetivo:** Dimensionar produção com alta concorrência e contexto longo.
 
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-120b \
   --server dgx300 \
   --storage profile_default \
@@ -118,7 +120,7 @@ python3 sizing.py \
 **Objetivo:** Ambiente de menor escala ou staging.
 
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-20b \
   --server dgx200 \
   --storage profile_default \
@@ -140,7 +142,7 @@ python3 sizing.py \
 
 **FP8 (recomendado, 1 byte/elemento):**
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-120b \
   --server dgx300 \
   --storage profile_default \
@@ -151,7 +153,7 @@ python3 sizing.py \
 
 **FP16 (dobro de memória, 2 bytes/elemento):**
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-120b \
   --server dgx300 \
   --storage profile_default \
@@ -173,7 +175,7 @@ python3 sizing.py \
 **Objetivo:** Criar relatório formatado para apresentação a CFO/CTO/Diretoria (além dos relatórios padrão).
 
 ```bash
-python3 sizing.py \
+python3 main.py \
   --model opt-oss-120b \
   --server dgx-b300 \
   --storage profile_default \
@@ -277,7 +279,7 @@ python3 sizing.py \
 ## Ajuda Completa
 
 ```bash
-python3 sizing.py --help
+python3 main.py --help
 ```
 
 ---
