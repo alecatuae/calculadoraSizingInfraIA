@@ -13,6 +13,8 @@ import argparse
 import json
 import math
 import sys
+import os
+from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -1562,6 +1564,146 @@ def parse_args():
     return parser.parse_args()
 
 
+def print_executive_summary(
+    model: Model,
+    server: Server,
+    scenarios: Dict[str, Any],
+    concurrency: int,
+    effective_context: int,
+    kv_precision: str
+) -> None:
+    """Imprime resumo executivo no terminal (saída interativa)."""
+    
+    print("=" * 80)
+    print("RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM")
+    print("=" * 80)
+    print()
+    
+    # Cabeçalho
+    print(f"Modelo:              {model.name}")
+    print(f"Servidor:            {server.name}")
+    print(f"Contexto Efetivo:    {effective_context:,} tokens")
+    print(f"Concorrência Alvo:   {concurrency:,} sessões simultâneas")
+    print(f"Precisão KV Cache:   {kv_precision.upper()}")
+    print()
+    
+    # Tabela resumida
+    print("-" * 80)
+    print(f"{'Cenário':<15} {'Nós DGX':>10} {'Sessões/Nó':>12} {'KV/Sessão (GiB)':>16} {'Observação':<25}")
+    print("-" * 80)
+    
+    for scenario_key, scenario_label in [("minimum", "MÍNIMO"), ("recommended", "RECOMENDADO"), ("ideal", "IDEAL")]:
+        sc = scenarios[scenario_key]
+        
+        # Observação contextual
+        if scenario_key == "minimum":
+            obs = "Risco alto, sem HA"
+        elif scenario_key == "recommended":
+            obs = "✓ Produção (N+1)"
+        else:
+            obs = "Máxima resiliência (N+2)"
+        
+        print(f"{scenario_label:<15} {sc.nodes_final:>10} {sc.sessions_per_node:>12} {sc.kv_per_session_gib:>16.2f} {obs:<25}")
+    
+    print("-" * 80)
+    print()
+    
+    # Status final
+    rec = scenarios["recommended"]
+    if rec.sessions_per_node == 0:
+        print("⚠️  ERRO: Não cabe nem 1 sessão por nó. Ajuste contexto, precisão ou servidor.")
+    elif rec.nodes_final <= 3:
+        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós) atende os requisitos com tolerância a falhas (N+1).")
+    elif rec.nodes_final <= 10:
+        print(f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós) atende os requisitos. Considere otimizações para grandes cargas.")
+    else:
+        print(f"⚠️  Cenário RECOMENDADO requer {rec.nodes_final} nós. Revise NFRs ou considere modelo menor.")
+    
+    print()
+    
+    # Alertas críticos (apenas os mais importantes)
+    critical_alerts = []
+    for sc in scenarios.values():
+        for warning in sc.warnings:
+            if "excede" in warning or "ERRO" in warning or "dobra" in warning:
+                if warning not in critical_alerts:
+                    critical_alerts.append(warning)
+    
+    if critical_alerts:
+        print("ALERTAS CRÍTICOS:")
+        for alert in critical_alerts[:3]:  # Máximo 3 alertas
+            print(f"  • {alert}")
+        print()
+    
+    print("=" * 80)
+
+
+def save_reports(
+    model: Model,
+    server: Server,
+    storage: StorageProfile,
+    scenarios: Dict[str, Any],
+    concurrency: int,
+    effective_context: int,
+    kv_precision: str,
+    kv_budget_ratio: float,
+    runtime_overhead_gib: float,
+    peak_headroom_ratio: float,
+    verbose: bool = False
+) -> Tuple[str, str]:
+    """
+    Salva relatórios completos em arquivos.
+    
+    Returns:
+        (caminho_txt, caminho_json)
+    """
+    # Criar diretório relatorios/ se não existir
+    os.makedirs("relatorios", exist_ok=True)
+    
+    # Gerar timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Nomes dos arquivos
+    filename_base = f"sizing_{model.name}_{server.name}_{timestamp}"
+    txt_path = os.path.join("relatorios", f"{filename_base}.txt")
+    json_path = os.path.join("relatorios", f"{filename_base}.json")
+    
+    # Gerar relatório completo em texto
+    report_text = format_report(
+        model=model,
+        server=server,
+        storage=storage,
+        scenarios=scenarios,
+        concurrency=concurrency,
+        effective_context=effective_context,
+        kv_precision=kv_precision,
+        verbose=verbose
+    )
+    
+    # Gerar JSON completo
+    json_output = scenarios_to_dict(
+        model=model,
+        server=server,
+        storage=storage,
+        scenarios=scenarios,
+        concurrency=concurrency,
+        effective_context=effective_context,
+        kv_precision=kv_precision,
+        kv_budget_ratio=kv_budget_ratio,
+        runtime_overhead_gib=runtime_overhead_gib,
+        peak_headroom_ratio=peak_headroom_ratio
+    )
+    
+    # Salvar arquivos
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(report_text)
+    
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_output, f, indent=2, ensure_ascii=False)
+    
+    return txt_path, json_path
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -1611,9 +1753,40 @@ def main():
         verbose=args.verbose
     )
     
-    # Gerar relatório em texto (se não for markdown-only ou json-only)
-    if not args.json_only and not args.markdown_only and not args.executive_report:
-        report = format_report(
+    # Salvar relatórios completos automaticamente
+    txt_path, json_path = save_reports(
+        model=models[args.model],
+        server=servers[args.server],
+        storage=storage_profiles[args.storage],
+        scenarios=scenarios,
+        concurrency=args.concurrency,
+        effective_context=args.effective_context,
+        kv_precision=args.kv_precision,
+        kv_budget_ratio=args.kv_budget_ratio,
+        runtime_overhead_gib=args.runtime_overhead_gib,
+        peak_headroom_ratio=args.peak_headroom_ratio,
+        verbose=args.verbose
+    )
+    
+    # Imprimir resumo executivo no terminal
+    print_executive_summary(
+        model=models[args.model],
+        server=servers[args.server],
+        scenarios=scenarios,
+        concurrency=args.concurrency,
+        effective_context=args.effective_context,
+        kv_precision=args.kv_precision
+    )
+    
+    # Mensagem final indicando onde estão os relatórios
+    print(f"📄 Relatórios completos salvos em:")
+    print(f"   • Texto:  {txt_path}")
+    print(f"   • JSON:   {json_path}")
+    print()
+    
+    # Manter compatibilidade com flags legadas (se usuário explicitamente pedir arquivos específicos)
+    if args.output_markdown_file:
+        markdown_report = format_report_markdown(
             model=models[args.model],
             server=servers[args.server],
             storage=storage_profiles[args.storage],
@@ -1623,14 +1796,14 @@ def main():
             kv_precision=args.kv_precision,
             verbose=args.verbose
         )
-        print(report)
-        print("\n")
-        print("=" * 100)
-        print("JSON OUTPUT (3 CENÁRIOS):")
-        print("=" * 100)
+        with open(args.output_markdown_file, "w", encoding="utf-8") as f:
+            f.write(markdown_report)
+        print(f"   • Markdown: {args.output_markdown_file}")
     
-    # Gerar relatório executivo (se solicitado)
     if args.executive_report:
+        executive_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        executive_filename = f"relatorios/executive_{models[args.model].name}_{servers[args.server].name}_{executive_timestamp}.md"
+        
         executive_report = format_executive_report(
             model=models[args.model],
             server=servers[args.server],
@@ -1643,64 +1816,12 @@ def main():
             runtime_overhead_gib=args.runtime_overhead_gib,
             verbose=args.verbose
         )
-        print(executive_report)
         
-        # Salvar em arquivo se solicitado
-        if args.output_markdown_file:
-            with open(args.output_markdown_file, "w", encoding="utf-8") as f:
-                f.write(executive_report)
-            print(f"\n✅ Relatório executivo salvo em: {args.output_markdown_file}", file=sys.stderr)
+        with open(executive_filename, "w", encoding="utf-8") as f:
+            f.write(executive_report)
         
-        # Para relatório executivo, não imprimir JSON por padrão (apenas se solicitado)
-        if not args.output_json_file and not args.json_only:
-            return
-    
-    # Gerar relatório em Markdown (se markdown-only ou se arquivo especificado)
-    if args.markdown_only or (args.output_markdown_file and not args.executive_report):
-        markdown_report = format_report_markdown(
-            model=models[args.model],
-            server=servers[args.server],
-            storage=storage_profiles[args.storage],
-            scenarios=scenarios,
-            concurrency=args.concurrency,
-            effective_context=args.effective_context,
-            kv_precision=args.kv_precision,
-            verbose=args.verbose
-        )
-        
-        # Se markdown-only, imprimir no stdout
-        if args.markdown_only:
-            print(markdown_report)
-        
-        # Se arquivo especificado, salvar
-        if args.output_markdown_file:
-            with open(args.output_markdown_file, "w", encoding="utf-8") as f:
-                f.write(markdown_report)
-            print(f"Markdown salvo em: {args.output_markdown_file}", file=sys.stderr)
-    
-    # JSON (se não for markdown-only)
-    if not args.markdown_only:
-        json_output = scenarios_to_dict(
-            model=models[args.model],
-            server=servers[args.server],
-            storage=storage_profiles[args.storage],
-            scenarios=scenarios,
-            concurrency=args.concurrency,
-            effective_context=args.effective_context,
-            kv_precision=args.kv_precision,
-            kv_budget_ratio=args.kv_budget_ratio,
-            runtime_overhead_gib=args.runtime_overhead_gib,
-            peak_headroom_ratio=args.peak_headroom_ratio
-        )
-        
-        json_str = json.dumps(json_output, indent=2, ensure_ascii=False)
-        print(json_str)
-        
-        # Salvar JSON em arquivo se solicitado
-        if args.output_json_file:
-            with open(args.output_json_file, "w", encoding="utf-8") as f:
-                f.write(json_str)
-            print(f"\nJSON salvo em: {args.output_json_file}", file=sys.stderr)
+        print(f"   • Executivo: {executive_filename}")
+        print()
 
 
 if __name__ == "__main__":

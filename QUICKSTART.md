@@ -24,7 +24,56 @@ python3 sizing.py \
 
 **O que faz:** Calcula quantos nós DGX B300 são necessários para sustentar 1000 sessões simultâneas com contexto de 128k tokens, usando o modelo opt-oss-120b.
 
-**Output:** 3 cenários (MÍNIMO: 2 nós | RECOMENDADO: 3 nós | IDEAL: 5 nós) + relatório detalhado + JSON.
+**Output no terminal:** Resumo executivo com tabela comparativa dos 3 cenários (MÍNIMO, RECOMENDADO, IDEAL).
+
+**Relatórios completos:** Salvos automaticamente em `relatorios/` com timestamp:
+- `sizing_<modelo>_<servidor>_<timestamp>.txt` (texto completo)
+- `sizing_<modelo>_<servidor>_<timestamp>.json` (JSON estruturado)
+
+---
+
+## Interface de Saída
+
+### No Terminal (Resumo Executivo)
+
+```
+================================================================================
+RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM
+================================================================================
+
+Modelo:              opt-oss-120b
+Servidor:            dgx300
+Contexto Efetivo:    131,072 tokens
+Concorrência Alvo:   1,000 sessões simultâneas
+Precisão KV Cache:   FP8
+
+--------------------------------------------------------------------------------
+Cenário            Nós DGX   Sessões/Nó  KV/Sessão (GiB) Observação
+--------------------------------------------------------------------------------
+MÍNIMO                   2          629             2.25 Risco alto, sem HA
+RECOMENDADO              3          629             2.25 ✓ Produção (N+1)
+IDEAL                    5          584             2.25 Máxima resiliência (N+2)
+--------------------------------------------------------------------------------
+
+✓ Cenário RECOMENDADO (3 nós) atende os requisitos com tolerância a falhas (N+1).
+
+================================================================================
+📄 Relatórios completos salvos em:
+   • Texto:  relatorios/sizing_opt-oss-120b_dgx300_20260208_134031.txt
+   • JSON:   relatorios/sizing_opt-oss-120b_dgx300_20260208_134031.json
+```
+
+### Nos Arquivos (Relatórios Completos)
+
+Os arquivos em `relatorios/` contêm:
+- ✅ Todas as entradas (modelo, servidor, storage, NFRs)
+- ✅ Dicionário completo de parâmetros
+- ✅ Resultados detalhados por cenário
+- ✅ Racional de cálculo (fórmulas, inputs, explicações)
+- ✅ Análise comparativa
+- ✅ Alertas e riscos operacionais
+
+**Para auditoria, revisão técnica ou apresentação executiva.**
 
 ---
 
@@ -44,10 +93,12 @@ python3 sizing.py \
   --kv-precision fp8
 ```
 
-**Resultado esperado:**
+**Resumo no terminal:**
 - MÍNIMO: 2 nós (sem HA)
-- RECOMENDADO: 3 nós (N+1, 20% headroom)
+- RECOMENDADO: 3 nós (N+1, 20% headroom) ✓
 - IDEAL: 5 nós (N+2, 30% headroom)
+
+**Relatórios salvos em:** `relatorios/sizing_opt-oss-120b_dgx300_<timestamp>.{txt,json}`
 
 ---
 
@@ -65,10 +116,10 @@ python3 sizing.py \
   --kv-precision fp8
 ```
 
-**Resultado esperado:**
-- MÍNIMO: 1 nó
-- RECOMENDADO: 2 nós (N+1)
-- IDEAL: 3 nós (N+2)
+**Resumo no terminal:**
+- MÍNIMO: 2 nós
+- RECOMENDADO: 3 nós (N+1) ✓
+- IDEAL: 4 nós (N+2)
 
 ---
 
@@ -102,12 +153,13 @@ python3 sizing.py \
 - FP16 dobra o KV por sessão
 - Reduz sessões por nó em ~50%
 - Aumenta número de nós necessários (ex: 3 → 5)
+- Compare os relatórios salvos em `relatorios/` para análise detalhada
 
 ---
 
-### 4. Gerar Relatório Executivo (para Diretoria)
+### 4. Gerar Relatório Executivo Adicional
 
-**Objetivo:** Criar relatório formatado para apresentação a CFO/CTO.
+**Objetivo:** Criar relatório formatado para apresentação a CFO/CTO (além dos relatórios padrão).
 
 ```bash
 python3 sizing.py \
@@ -116,52 +168,46 @@ python3 sizing.py \
   --storage profile_default \
   --concurrency 1000 \
   --effective-context 131072 \
-  --executive-report \
-  --output-markdown-file relatorio_diretoria.md
+  --executive-report
 ```
 
-**Output:** Arquivo Markdown com linguagem estratégica, tabelas comparativas, análise de CapEx e recomendação clara.
-
----
-
-### 5. Salvar JSON para Análise Programática
-
-**Objetivo:** Exportar dados para integração com pipelines de IaC ou dashboards.
-
-```bash
-python3 sizing.py \
-  --model opt-oss-120b \
-  --server dgx300 \
-  --storage profile_default \
-  --concurrency 1000 \
-  --effective-context 131072 \
-  --output-json-file sizing_results.json
-```
-
-**Uso do JSON:**
-- Integração com Terraform/Ansible
-- Dashboards de capacity planning
-- Análise em planilhas (FinOps)
+**Arquivos gerados:**
+- `relatorios/sizing_<modelo>_<servidor>_<timestamp>.txt` (padrão)
+- `relatorios/sizing_<modelo>_<servidor>_<timestamp>.json` (padrão)
+- `relatorios/executive_<modelo>_<servidor>_<timestamp>.md` (executivo) ← Adicional
 
 ---
 
 ## Interpretação Rápida
 
-### Onde Olhar Primeiro no Output
+### Como Ler o Resumo no Terminal
 
-**1. Seção "CENÁRIO: RECOMENDADO"**
-- `Nodes Final`: Número de nós DGX a provisionar para produção
-- `Sessions Per Node`: Capacidade efetiva por nó
-- `Kv Per Session Gib`: Memória necessária por sessão ativa
+**1. Tabela de Cenários**
+- `Nós DGX`: Número de servidores necessários para cada cenário
+- `Sessões/Nó`: Capacidade efetiva de cada servidor
+- `KV/Sessão (GiB)`: Memória GPU necessária por sessão ativa
+- `Observação`: Classificação de risco/resiliência
 
-**2. Seção "ALERTAS E RISCOS"**
-- Avisos críticos (ex: contexto excede limite, precisão ineficiente)
-- Recomendações operacionais
+**2. Status Final**
+- ✓ Verde: Dimensionamento adequado
+- ⚠️  Amarelo: Atenção necessária (revisar NFRs ou configuração)
 
-**3. JSON Final**
-- `scenarios.recommended.results.nodes_final`: Nós necessários
-- `scenarios.recommended.results.sessions_per_node`: Capacidade por nó
-- `alerts`: Lista de avisos automatizados
+**3. Localização dos Relatórios**
+- Sempre em `relatorios/` com timestamp
+- Arquivos nunca são sobrescritos
+
+### Onde Olhar nos Relatórios Completos
+
+**Para análise técnica detalhada:**
+1. Abra o arquivo `.txt` em `relatorios/`
+2. Leia a **Seção 3: Resultados por Cenário**
+3. Consulte o **Racional de Cálculo** para entender as fórmulas
+
+**Para integração programática:**
+1. Abra o arquivo `.json` em `relatorios/`
+2. Use `scenarios.recommended.results.nodes_final` para número de nós
+3. Use `scenarios.recommended.results.sessions_per_node` para capacidade
+4. Consulte `alerts` para avisos automatizados
 
 ---
 
