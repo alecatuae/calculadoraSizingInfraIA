@@ -40,6 +40,22 @@ class ModelSpec:
     
     def validate(self) -> None:
         """Valida especificação do modelo."""
+        # Normalizar attention_pattern para padrões reconhecidos
+        # Suporte para descrições técnicas detalhadas (ex: "sparse (DSA) + MLA-style...")
+        pattern_normalized = self.attention_pattern.lower()
+        
+        # Detectar padrão baseado em hybrid_full_layers e hybrid_sliding_layers
+        if self.hybrid_full_layers is not None and self.hybrid_sliding_layers is not None:
+            if self.hybrid_full_layers == 0 and self.hybrid_sliding_layers == self.num_layers:
+                # 100% sliding window
+                self.attention_pattern = "sliding"
+            elif self.hybrid_full_layers == self.num_layers and self.hybrid_sliding_layers == 0:
+                # 100% full attention
+                self.attention_pattern = "full"
+            elif self.hybrid_full_layers > 0 and self.hybrid_sliding_layers > 0:
+                # Mix de full e sliding
+                self.attention_pattern = "hybrid"
+        
         if self.attention_pattern == "hybrid":
             if self.hybrid_full_layers is None or self.hybrid_sliding_layers is None:
                 raise ValueError(

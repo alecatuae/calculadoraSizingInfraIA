@@ -15,7 +15,7 @@ from sizing.calc_vram import calc_vram
 from sizing.calc_scenarios import create_scenario_configs, calc_scenario, ScenarioResult
 from sizing.calc_physical import calc_physical_consumption
 from sizing.report_full import format_full_report, format_json_report
-from sizing.report_exec import format_exec_summary
+from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
 
 
@@ -163,6 +163,26 @@ def main():
             server.name
         )
         
+        # 10.5. Gerar relatório executivo em Markdown se solicitado
+        if config.executive_report:
+            if config.verbose:
+                print("📊 Gerando relatório executivo...")
+            
+            exec_markdown = format_executive_markdown(
+                model=model,
+                server=server,
+                scenarios=scenarios,
+                concurrency=config.concurrency,
+                effective_context=kv_result.effective_context_clamped,
+                kv_precision=config.kv_precision
+            )
+            
+            exec_path = writer.write_executive_report(
+                exec_markdown,
+                model.name,
+                server.name
+            )
+        
         # 11. Exibir resumo executivo no terminal
         exec_summary = format_exec_summary(
             model_name=model.name,
@@ -176,6 +196,11 @@ def main():
         )
         
         print(exec_summary)
+        
+        # 11.5. Exibir path do executive report se foi gerado
+        if config.executive_report:
+            print(f"   • Executive: {exec_path}")
+            print()
         
         # 12. Exibir avisos críticos se houver
         critical_warnings = [w for w in all_warnings if "🚨" in w or "ERRO CRÍTICO" in w]
