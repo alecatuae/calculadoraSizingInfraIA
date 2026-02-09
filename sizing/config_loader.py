@@ -119,14 +119,16 @@ class ConfigLoader:
             profile = StorageProfile(
                 name=p["name"],
                 type=p["type"],
-                iops_read=p.get("iops_read"),
-                iops_write=p.get("iops_write"),
-                throughput_read_gbps=p.get("throughput_read_gbps"),
-                throughput_write_gbps=p.get("throughput_write_gbps"),
-                latency_read_ms_p50=p.get("latency_read_ms_p50"),
-                latency_read_ms_p99=p.get("latency_read_ms_p99"),
-                latency_write_ms_p50=p.get("latency_write_ms_p50"),
-                latency_write_ms_p99=p.get("latency_write_ms_p99"),
+                capacity_total_tb=p.get("capacity_total_tb", 0.0),
+                usable_capacity_tb=p.get("usable_capacity_tb", 0.0),
+                iops_read_max=p.get("iops_read_max", 0),
+                iops_write_max=p.get("iops_write_max", 0),
+                throughput_read_gbps=p.get("throughput_read_gbps", 0.0),
+                throughput_write_gbps=p.get("throughput_write_gbps", 0.0),
+                latency_read_ms_p50=p.get("latency_read_ms_p50", 0.0),
+                latency_read_ms_p99=p.get("latency_read_ms_p99", 0.0),
+                latency_write_ms_p50=p.get("latency_write_ms_p50", 0.0),
+                latency_write_ms_p99=p.get("latency_write_ms_p99", 0.0),
                 notes=p.get("notes", "")
             )
             profile.validate()

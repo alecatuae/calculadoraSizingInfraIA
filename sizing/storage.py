@@ -8,33 +8,45 @@ from typing import Optional
 
 @dataclass
 class StorageProfile:
-    """Especificação de um perfil de storage."""
+    """Especificação de um perfil de storage para operação de inferência."""
     
     name: str
-    type: str  # ex: "nvme", "ssd", "hdd", "network"
+    type: str  # ex: "nvme_local", "network_ssd", "cloud_block_storage"
     
-    # IOPS
-    iops_read: Optional[int] = None
-    iops_write: Optional[int] = None
+    # Capacidade (TB)
+    capacity_total_tb: float = 0.0
+    usable_capacity_tb: float = 0.0
     
-    # Throughput
-    throughput_read_gbps: Optional[float] = None
-    throughput_write_gbps: Optional[float] = None
+    # IOPS máximos
+    iops_read_max: int = 0
+    iops_write_max: int = 0
+    
+    # Throughput (GB/s)
+    throughput_read_gbps: float = 0.0
+    throughput_write_gbps: float = 0.0
     
     # Latency percentiles (ms)
-    latency_read_ms_p50: Optional[float] = None
-    latency_read_ms_p99: Optional[float] = None
-    latency_write_ms_p50: Optional[float] = None
-    latency_write_ms_p99: Optional[float] = None
+    latency_read_ms_p50: float = 0.0
+    latency_read_ms_p99: float = 0.0
+    latency_write_ms_p50: float = 0.0
+    latency_write_ms_p99: float = 0.0
     
     # Metadata
     notes: str = ""
     
     def validate(self) -> None:
         """Valida especificação do perfil de storage."""
-        # Storage é opcional para sizing de KV (que fica em HBM)
-        # Validações básicas apenas se valores forem fornecidos
-        if self.iops_read is not None and self.iops_read < 0:
-            raise ValueError(f"Storage {self.name}: iops_read must be >= 0")
-        if self.iops_write is not None and self.iops_write < 0:
-            raise ValueError(f"Storage {self.name}: iops_write must be >= 0")
+        if self.capacity_total_tb < 0:
+            raise ValueError(f"Storage {self.name}: capacity_total_tb must be >= 0")
+        if self.usable_capacity_tb < 0:
+            raise ValueError(f"Storage {self.name}: usable_capacity_tb must be >= 0")
+        if self.usable_capacity_tb > self.capacity_total_tb:
+            raise ValueError(f"Storage {self.name}: usable_capacity_tb cannot exceed capacity_total_tb")
+        if self.iops_read_max < 0:
+            raise ValueError(f"Storage {self.name}: iops_read_max must be >= 0")
+        if self.iops_write_max < 0:
+            raise ValueError(f"Storage {self.name}: iops_write_max must be >= 0")
+        if self.throughput_read_gbps < 0:
+            raise ValueError(f"Storage {self.name}: throughput_read_gbps must be >= 0")
+        if self.throughput_write_gbps < 0:
+            raise ValueError(f"Storage {self.name}: throughput_write_gbps must be >= 0")

@@ -81,6 +81,24 @@ def format_full_report(
     lines.append(f"  • Sessões suportadas: {rec.vram.sessions_per_node}")
     lines.append("")
     
+    # Seção 2.5: Perfil de Storage
+    lines.append("┌" + "─" * 98 + "┐")
+    lines.append("│" + " SEÇÃO 2.5: PERFIL DE STORAGE".ljust(98) + "│")
+    lines.append("└" + "─" * 98 + "┘")
+    lines.append("")
+    
+    lines.append(f"Storage: {storage.name}")
+    lines.append(f"  • Tipo: {storage.type}")
+    lines.append(f"  • Capacidade total: {storage.capacity_total_tb:.2f} TB")
+    lines.append(f"  • Capacidade utilizável: {storage.usable_capacity_tb:.2f} TB")
+    lines.append(f"  • IOPS leitura (max): {storage.iops_read_max:,}")
+    lines.append(f"  • IOPS escrita (max): {storage.iops_write_max:,}")
+    lines.append(f"  • Throughput leitura: {storage.throughput_read_gbps:.2f} GB/s")
+    lines.append(f"  • Throughput escrita: {storage.throughput_write_gbps:.2f} GB/s")
+    lines.append(f"  • Latência leitura (p50/p99): {storage.latency_read_ms_p50:.2f} / {storage.latency_read_ms_p99:.2f} ms")
+    lines.append(f"  • Latência escrita (p50/p99): {storage.latency_write_ms_p50:.2f} / {storage.latency_write_ms_p99:.2f} ms")
+    lines.append("")
+    
     # Seção 3: Resultados por Cenário
     lines.append("┌" + "─" * 98 + "┐")
     lines.append("│" + " SEÇÃO 3: RESULTADOS POR CENÁRIO".ljust(98) + "│")
@@ -92,10 +110,28 @@ def format_full_report(
         lines.append("=" * 100)
         lines.append(f"CENÁRIO: {s.config.name}")
         lines.append("=" * 100)
+        lines.append("")
+        lines.append("COMPUTAÇÃO:")
         lines.append(f"  • Nós DGX: {s.nodes_final}")
         lines.append(f"  • Sessões por nó (capacidade): {s.vram.sessions_per_node}")
         lines.append(f"  • Sessões por nó (operando): {s.sessions_per_node_effective}")
         lines.append(f"  • VRAM por nó (efetiva): {s.vram_total_node_effective_gib:.1f} GiB ({s.hbm_utilization_ratio_effective*100:.1f}% HBM)")
+        lines.append("")
+        
+        if s.storage:
+            lines.append("STORAGE:")
+            lines.append(f"  • Volumetria total: {s.storage.storage_total_tb:.2f} TB")
+            lines.append(f"    - Modelo: {s.storage.storage_model_tb:.2f} TB")
+            lines.append(f"    - Cache: {s.storage.storage_cache_tb:.2f} TB")
+            lines.append(f"    - Logs: {s.storage.storage_logs_tb:.2f} TB")
+            lines.append(f"    - Operacional: {s.storage.storage_operational_tb:.2f} TB")
+            lines.append(f"  • IOPS (pico): {s.storage.iops_read_peak:,} R / {s.storage.iops_write_peak:,} W")
+            lines.append(f"  • IOPS (steady): {s.storage.iops_read_steady:,} R / {s.storage.iops_write_steady:,} W")
+            lines.append(f"  • Throughput (pico): {s.storage.throughput_read_peak_gbps:.2f} R / {s.storage.throughput_write_peak_gbps:.2f} W GB/s")
+            lines.append(f"  • Throughput (steady): {s.storage.throughput_read_steady_gbps:.2f} R / {s.storage.throughput_write_steady_gbps:.2f} W GB/s")
+            lines.append("")
+        
+        lines.append("INFRAESTRUTURA FÍSICA:")
         lines.append(f"  • Energia total: {s.total_power_kw:.1f} kW")
         lines.append(f"  • Rack total: {s.total_rack_u}U")
         lines.append(f"  • HA: {s.config.ha_mode}")
@@ -135,7 +171,7 @@ def format_json_report(
         Dict serializável para JSON
     """
     def scenario_to_dict(s: ScenarioResult) -> Dict[str, Any]:
-        return {
+        result = {
             "config": {
                 "name": s.config.name,
                 "peak_headroom_ratio": s.config.peak_headroom_ratio,
@@ -158,6 +194,27 @@ def format_json_report(
                 "total_heat_btu_hr": round(s.total_heat_btu_hr, 0)
             }
         }
+        
+        # Adicionar storage se disponível
+        if s.storage:
+            result["results"]["storage"] = {
+                "storage_model_tb": round(s.storage.storage_model_tb, 3),
+                "storage_cache_tb": round(s.storage.storage_cache_tb, 3),
+                "storage_logs_tb": round(s.storage.storage_logs_tb, 3),
+                "storage_operational_tb": round(s.storage.storage_operational_tb, 3),
+                "storage_total_tb": round(s.storage.storage_total_tb, 3),
+                "iops_read_peak": s.storage.iops_read_peak,
+                "iops_write_peak": s.storage.iops_write_peak,
+                "iops_read_steady": s.storage.iops_read_steady,
+                "iops_write_steady": s.storage.iops_write_steady,
+                "throughput_read_peak_gbps": round(s.storage.throughput_read_peak_gbps, 2),
+                "throughput_write_peak_gbps": round(s.storage.throughput_write_peak_gbps, 2),
+                "throughput_read_steady_gbps": round(s.storage.throughput_read_steady_gbps, 2),
+                "throughput_write_steady_gbps": round(s.storage.throughput_write_steady_gbps, 2)
+            }
+            result["rationale_storage"] = s.storage.rationale
+        
+        return result
     
     return {
         "inputs": {
@@ -167,6 +224,20 @@ def format_json_report(
             "concurrency": concurrency,
             "effective_context": effective_context,
             "kv_precision": kv_precision
+        },
+        "storage_profile": {
+            "name": storage.name,
+            "type": storage.type,
+            "capacity_total_tb": storage.capacity_total_tb,
+            "usable_capacity_tb": storage.usable_capacity_tb,
+            "iops_read_max": storage.iops_read_max,
+            "iops_write_max": storage.iops_write_max,
+            "throughput_read_gbps": storage.throughput_read_gbps,
+            "throughput_write_gbps": storage.throughput_write_gbps,
+            "latency_read_ms_p50": storage.latency_read_ms_p50,
+            "latency_read_ms_p99": storage.latency_read_ms_p99,
+            "latency_write_ms_p50": storage.latency_write_ms_p50,
+            "latency_write_ms_p99": storage.latency_write_ms_p99
         },
         "scenarios": {
             "minimum": scenario_to_dict(scenarios["minimum"]),

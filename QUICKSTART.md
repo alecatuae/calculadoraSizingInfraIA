@@ -26,7 +26,9 @@ python3 main.py \
 
 **✨ NOVO:** O projeto agora é modular! O script principal é `main.py`, que orquestra módulos especializados em `/sizing/`.
 
-**Output no terminal:** Resumo executivo com tabela comparativa dos 3 cenários (MÍNIMO, RECOMENDADO, IDEAL).
+**✨ NOVO (v3.0):** Dimensionamento completo de **storage** incluído! Calcula volumetria (TB), IOPS, throughput e impacto operacional por cenário.
+
+**Output no terminal:** Resumo executivo com tabela comparativa dos 3 cenários (MÍNIMO, RECOMENDADO, IDEAL) incluindo storage.
 
 **Relatórios completos:** Salvos automaticamente em `relatorios/` com timestamp:
 - `sizing_<modelo>_<servidor>_<timestamp>.txt` (texto completo)
@@ -49,15 +51,15 @@ Contexto Efetivo:    131,072 tokens
 Concorrência Alvo:   1,000 sessões simultâneas
 Precisão KV Cache:   FP8
 
---------------------------------------------------------------------------------
-Cenário          Nós DGX  Energia (kW)  Rack (U)  Sessões/Nó  KV/Sessão (GiB)
---------------------------------------------------------------------------------
-MÍNIMO                 2          29.0        20         629             2.25
-RECOMENDADO            3          43.5        30         629             2.25
-IDEAL                  5          72.5        50         584             2.25
---------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------
+Cenário          Nós     kW      Rack    Storage (TB)   Sessões/Nó  KV/Sessão (GiB)
+------------------------------------------------------------------------------------------------------------------------
+MÍNIMO             2    29.0      20          4.2              629             2.25
+RECOMENDADO        3    43.5      30          7.8              629             2.25
+IDEAL              5    72.5      50         15.6              584             2.25
+------------------------------------------------------------------------------------------------------------------------
 
-✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U) atende os requisitos com 
+✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U, 7.8 TB storage) atende os requisitos com 
   tolerância a falhas (N+1).
 
 ================================================================================

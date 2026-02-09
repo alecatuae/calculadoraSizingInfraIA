@@ -28,11 +28,18 @@ Este projeto calcula quantos **nós DGX** são necessários para sustentar uma c
 - Precisão do KV cache (fp8, fp16, bf16, int8)
 - Tolerância a falhas (HA: none, N+1, N+2)
 - Headroom para picos de tráfego
+- **✨ NOVO (v3.0):** Dimensionamento completo de **storage** (volumetria, IOPS, throughput)
 
 E avalia **3 cenários** automaticamente:
 1. **MÍNIMO**: Atende no limite, sem folga (risco alto)
 2. **RECOMENDADO**: Produção com HA e headroom (risco médio)
 3. **IDEAL**: Máxima resiliência e estabilidade (risco baixo)
+
+**Storage** é dimensionado por cenário, considerando:
+- Pesos do modelo (checkpoints, shards, versionamento)
+- Cache de runtime (engine compilado, artefatos)
+- Logs, métricas e auditoria (retenção variável)
+- Dados operacionais (configurações, metadados)
 
 ---
 
@@ -76,23 +83,59 @@ Se o contexto dobrar para 256k tokens:
 
 **Implicação prática:** Aumentar concorrência de 100 para 1000 sessões (10x) **não** aumenta a memória de pesos (permanece constante), mas aumenta KV cache em 10x.
 
+### Por Que Storage é Crítico (Não Apenas "Onde o Modelo Fica")
+
+Embora o KV cache resida em HBM (memória GPU), **storage** é um recurso operacional crítico para:
+
+#### 1. Operação Contínua
+- **Pesos do modelo** (checkpoints/shards): Necessários para startup, restart, scale-out
+- **Cache de runtime** (engine compilado TensorRT-LLM/NIM): Reduz tempo de inicialização de ~10min para ~30s
+- **Logs e métricas**: Essenciais para debugging, auditoria, conformidade
+
+#### 2. Resiliência e Tempo de Recuperação
+- **Restart de nós**: Storage subdimensionado aumenta tempo de recuperação de minutos para horas
+- **Scale-out**: IOPS insuficientes criam gargalo ao adicionar nós simultaneamente
+- **Versionamento**: Rollback rápido requer múltiplas versões de checkpoints
+
+#### 3. Governança e Conformidade
+- **Retenção de logs**: Auditoria e troubleshooting exigem retenção adequada (7–90 dias)
+- **Métricas de inferência**: SLO tracking, billing, capacity planning
+- **Traces distribuídos**: Diagnóstico de latência e comportamento anômalo
+
+**Dimensionamento por Cenário:**
+- **MÍNIMO**: Apenas operação steady-state (retenção 7 dias, sem margem para picos)
+- **RECOMENDADO**: Suporta picos e restart de 25% dos nós (retenção 30 dias)
+- **IDEAL**: Máxima resiliência, falhas em cascata, retenção estendida (90 dias)
+
+**Exemplo Prático (opt-oss-120b, 1000 sessões, 3 nós):**
+- Storage RECOMENDADO: **~7.8 TB** (2.5 TB modelo + 3 TB cache + 1.8 TB logs + 0.5 TB ops)
+- IOPS pico: **187,500 leitura** (restart de 25% dos nós) / **3,000 escrita** (flush de logs)
+- Throughput pico: **6.9 GB/s leitura** (modelo < 60s) / **0.7 GB/s escrita**
+
 ---
 
 ## Arquitetura da Solução
 
-### sizing.py (Script Principal)
+### main.py + /sizing/ (Arquitetura Modular)
 
-Engine de cálculo que:
-1. Lê configurações de modelos, servidores e storage (JSONs)
-2. Recebe parâmetros de NFR e runtime via CLI
-3. Calcula KV cache por sessão baseado na arquitetura do modelo
-4. Dimensiona número de nós necessários para 3 cenários
-5. Gera relatório texto + JSON estruturado com racional de cálculo
+**✨ NOVO (v2.0):** Projeto refatorado para arquitetura modular!
+
+**main.py** orquestra o fluxo completo:
+1. Parse CLI (sizing/cli.py)
+2. Carrega configurações (sizing/config_loader.py)
+3. Calcula KV cache (sizing/calc_kv.py)
+4. Calcula VRAM real (sizing/calc_vram.py)
+5. Calcula storage (sizing/calc_storage.py) **← NOVO v3.0**
+6. Avalia 3 cenários (sizing/calc_scenarios.py)
+7. Gera relatórios (sizing/report_full.py, sizing/report_exec.py)
+8. Salva arquivos (sizing/writer.py)
 
 **Características técnicas:**
 - Python 3.8+ (stdlib only, zero dependências externas)
-- ~1700 linhas, funções puras para cálculos core
+- Módulos especializados (~200 linhas cada)
+- Funções puras para cálculos core
 - CLI via argparse, extensível
+- Fácil manutenção e testes
 
 ### models.json (Parâmetros de Modelos LLM)
 
@@ -135,19 +178,32 @@ Define especificações de servidores DGX:
 - `gpus`: Número de GPUs (informativo)
 - `nvlink_bandwidth_tbps`: Opcional, para análise de throughput
 
-### storage.json (Perfis de I/O)
+### storage.json (Perfis de Storage)
 
-Define características de storage para validações:
+Define características completas de storage para dimensionamento e validações:
 
 ```json
 {
   "name": "profile_default",
   "type": "nvme_local",
-  "iops_read": 1000000,
+  "capacity_total_tb": 61.44,
+  "usable_capacity_tb": 56.0,
+  "iops_read_max": 1000000,
+  "iops_write_max": 800000,
   "throughput_read_gbps": 28,
-  "latency_read_ms_p99": 0.15
+  "throughput_write_gbps": 25,
+  "latency_read_ms_p50": 0.08,
+  "latency_read_ms_p99": 0.15,
+  "latency_write_ms_p50": 0.10,
+  "latency_write_ms_p99": 0.20
 }
 ```
+
+**✨ NOVO (v3.0):** Storage agora é dimensionado ativamente:
+- **Volumetria calculada**: Pesos, cache, logs, dados operacionais
+- **IOPS por cenário**: Steady-state vs. pico (restart, scale-out)
+- **Throughput por cenário**: Otimizado para tempo de recuperação < 60s
+- **Alertas automáticos**: Se requisitos excedem capacidade do perfil
 
 **Uso:** Gera alertas se contexto longo puder pressionar I/O (prefill, cold-start). **Não** é usado no cálculo de KV cache (que reside em HBM).
 
@@ -346,14 +402,14 @@ Concorrência Alvo:   1,000 sessões simultâneas
 Precisão KV Cache:   FP8
 
 --------------------------------------------------------------------------------
-Cenário          Nós DGX  Energia (kW)  Rack (U)  Sessões/Nó  KV/Sessão (GiB)
---------------------------------------------------------------------------------
-MÍNIMO                 2          29.0        20         629             2.25
-RECOMENDADO            3          43.5        30         629             2.25
-IDEAL                  5          72.5        50         584             2.25
---------------------------------------------------------------------------------
+Cenário          Nós     kW      Rack    Storage (TB)   Sessões/Nó  KV/Sessão (GiB)
+------------------------------------------------------------------------------------------------------------------------
+MÍNIMO             2    29.0      20          4.2              629             2.25
+RECOMENDADO        3    43.5      30          7.8              629             2.25
+IDEAL              5    72.5      50         15.6              584             2.25
+------------------------------------------------------------------------------------------------------------------------
 
-✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U) atende os requisitos com 
+✓ Cenário RECOMENDADO (3 nós, 43.5 kW, 30U, 7.8 TB storage) atende os requisitos com 
   tolerância a falhas (N+1).
 
 ================================================================================
@@ -395,6 +451,11 @@ Para cada cenário (MÍNIMO, RECOMENDADO, IDEAL):
 - **Energia total (kW)** e consumo anual (MWh)
 - **Espaço em rack (U)** e equivalente em racks padrão (42U)
 - **Dissipação térmica (BTU/hr)** e tons de refrigeração
+- **✨ NOVO v3.0: Storage por cenário**
+  - Volumetria total (TB): modelo + cache + logs + operacional
+  - IOPS (pico e steady-state): leitura e escrita
+  - Throughput (pico e steady-state): leitura e escrita
+  - Alertas se requisitos excedem capacidade do perfil
 
 E para cada resultado, um **Racional** explicando:
 - Fórmula usada

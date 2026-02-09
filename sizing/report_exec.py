@@ -40,23 +40,25 @@ def format_exec_summary(
     lines.append("")
     
     # Tabela de cenários
-    lines.append("-" * 100)
-    header = f"{'Cenário':<20} {'Nós DGX':<10} {'Energia (kW)':<15} {'Rack (U)':<10} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
+    lines.append("-" * 120)
+    header = f"{'Cenário':<20} {'Nós':<8} {'kW':<10} {'Rack':<8} {'Storage (TB)':<15} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
     lines.append(header)
-    lines.append("-" * 100)
+    lines.append("-" * 120)
     
     for key in ["minimum", "recommended", "ideal"]:
         s = scenarios[key]
-        row = f"{s.config.name:<20} {s.nodes_final:<10} {s.total_power_kw:<15.1f} {s.total_rack_u:<10} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
+        storage_tb = f"{s.storage.storage_total_tb:.1f}" if s.storage else "N/A"
+        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw:<10.1f} {s.total_rack_u:<8} {storage_tb:<15} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
         lines.append(row)
     
-    lines.append("-" * 100)
+    lines.append("-" * 120)
     lines.append("")
     
     # Recomendação
     rec = scenarios["recommended"]
+    storage_info = f", {rec.storage.storage_total_tb:.1f} TB storage" if rec.storage else ""
     lines.append(
-        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw:.1f} kW, {rec.total_rack_u}U) "
+        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw:.1f} kW, {rec.total_rack_u}U{storage_info}) "
         f"atende os requisitos com tolerância a falhas ({rec.config.ha_mode.upper()})."
     )
     lines.append("")
@@ -77,7 +79,8 @@ def format_executive_markdown(
     scenarios: Dict[str, ScenarioResult],
     concurrency: int,
     effective_context: int,
-    kv_precision: str
+    kv_precision: str,
+    storage_name: str = "N/A"
 ) -> str:
     """
     Gera relatório executivo completo em Markdown.
@@ -101,14 +104,21 @@ def format_executive_markdown(
     lines.append("## Sumário Executivo")
     lines.append("")
     lines.append(f"Para sustentar **{concurrency:,} sessões simultâneas** com contexto de **{effective_context:,} tokens** ")
-    lines.append(f"utilizando o modelo **{model.name}**, a infraestrutura é dimensionada por **memória GPU (KV cache)**.")
+    lines.append(f"utilizando o modelo **{model.name}**, a infraestrutura é dimensionada por **memória GPU (KV cache)** e **storage**.")
     lines.append("")
-    lines.append(f"O principal limitador é o consumo de HBM para armazenar o estado de atenção (KV cache) de cada sessão ativa.")
+    lines.append(f"O principal limitador de capacidade é o consumo de HBM para armazenar o estado de atenção (KV cache) de cada sessão ativa. ")
+    lines.append(f"Storage é dimensionado para operação contínua (pesos do modelo, cache de runtime, logs e auditoria), ")
+    lines.append(f"garantindo resiliência, tempo de recuperação e governança operacional.")
     lines.append("")
     
     rec = scenarios["recommended"]
+    storage_rec = rec.storage if rec.storage else None
     lines.append(f"**Recomendação:** {rec.nodes_final} nós DGX {server.name} ")
-    lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack) com tolerância a falhas {rec.config.ha_mode.upper()}.")
+    if storage_rec:
+        lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack, {storage_rec.storage_total_tb:.1f} TB storage) ")
+    else:
+        lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack) ")
+    lines.append(f"com tolerância a falhas {rec.config.ha_mode.upper()}.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -173,19 +183,39 @@ def format_executive_markdown(
         lines.append(f"| VRAM total por nó | {s.vram_total_node_effective_gib:.1f} GiB ({s.hbm_utilization_ratio_effective*100:.1f}% HBM) |")
         lines.append(f"| Energia total | {s.total_power_kw:.1f} kW |")
         lines.append(f"| Espaço em rack | {s.total_rack_u}U |")
+        
+        # Storage metrics
+        if s.storage:
+            st = s.storage
+            lines.append(f"| **Storage total** | **{st.storage_total_tb:.2f} TB** |")
+            lines.append(f"| Storage (modelo) | {st.storage_model_tb:.2f} TB |")
+            lines.append(f"| Storage (cache) | {st.storage_cache_tb:.2f} TB |")
+            lines.append(f"| Storage (logs) | {st.storage_logs_tb:.2f} TB |")
+            lines.append(f"| IOPS (pico R/W) | {st.iops_read_peak:,} / {st.iops_write_peak:,} |")
+            lines.append(f"| Throughput (pico R/W) | {st.throughput_read_peak_gbps:.1f} / {st.throughput_write_peak_gbps:.1f} GB/s |")
+        
         lines.append(f"| Arquitetura HA | {s.config.ha_mode.upper()} |")
         lines.append("")
         
         # Parágrafo executivo
         if key == "minimum":
-            lines.append(f"**Análise:** Opera no limite da capacidade sem margem para picos ou falhas. ")
-            lines.append(f"Risco operacional **alto** - qualquer indisponibilidade de hardware afeta o serviço diretamente.")
+            lines.append(f"**Análise Computacional:** Opera no limite da capacidade sem margem para picos ou falhas. ")
+            lines.append(f"Risco operacional **alto** - qualquer indisponibilidade de hardware afeta o serviço diretamente. ")
+            if s.storage:
+                lines.append(f"**Análise Storage:** Volumetria mínima ({s.storage.storage_total_tb:.1f} TB) para operação steady-state. ")
+                lines.append(f"IOPS e throughput dimensionados sem margem. Risco de gargalo em scale-out ou restart simultâneo.")
         elif key == "recommended":
-            lines.append(f"**Análise:** Equilibra eficiência e resiliência. Suporta picos de até {s.config.peak_headroom_ratio*100:.0f}% ")
-            lines.append(f"e tolera falha de 1 nó sem degradação do serviço. **Adequado para produção.**")
+            lines.append(f"**Análise Computacional:** Equilibra eficiência e resiliência. Suporta picos de até {s.config.peak_headroom_ratio*100:.0f}% ")
+            lines.append(f"e tolera falha de 1 nó sem degradação do serviço. **Adequado para produção.** ")
+            if s.storage:
+                lines.append(f"**Análise Storage:** {s.storage.storage_total_tb:.1f} TB com margem operacional (1.5x). ")
+                lines.append(f"IOPS e throughput suportam restart de 25% dos nós + burst de logs. Tempo de recuperação aceitável.")
         else:  # ideal
-            lines.append(f"**Análise:** Máxima resiliência com margem para múltiplas falhas e picos elevados. ")
-            lines.append(f"Custo maior, mas risco operacional **mínimo**. Ideal para serviços críticos.")
+            lines.append(f"**Análise Computacional:** Máxima resiliência com margem para múltiplas falhas e picos elevados. ")
+            lines.append(f"Custo maior, mas risco operacional **mínimo**. Ideal para serviços críticos. ")
+            if s.storage:
+                lines.append(f"**Análise Storage:** {s.storage.storage_total_tb:.1f} TB com margem ampla (2x). ")
+                lines.append(f"IOPS e throughput suportam falhas em cascata. Retenção estendida de logs (90 dias). Máxima resiliência.")
         lines.append("")
     
     lines.append("---")
@@ -199,10 +229,22 @@ def format_executive_markdown(
     lines.append(f"| Nós DGX | {scenarios['minimum'].nodes_final} | {scenarios['recommended'].nodes_final} | {scenarios['ideal'].nodes_final} |")
     lines.append(f"| Energia (kW) | {scenarios['minimum'].total_power_kw:.1f} | {scenarios['recommended'].total_power_kw:.1f} | {scenarios['ideal'].total_power_kw:.1f} |")
     lines.append(f"| Rack (U) | {scenarios['minimum'].total_rack_u} | {scenarios['recommended'].total_rack_u} | {scenarios['ideal'].total_rack_u} |")
+    
+    # Storage comparison
+    if scenarios['minimum'].storage and scenarios['recommended'].storage and scenarios['ideal'].storage:
+        st_min = scenarios['minimum'].storage
+        st_rec = scenarios['recommended'].storage
+        st_ideal = scenarios['ideal'].storage
+        lines.append(f"| Storage (TB) | {st_min.storage_total_tb:.1f} | {st_rec.storage_total_tb:.1f} | {st_ideal.storage_total_tb:.1f} |")
+        lines.append(f"| IOPS pico (R) | {st_min.iops_read_peak:,} | {st_rec.iops_read_peak:,} | {st_ideal.iops_read_peak:,} |")
+        lines.append(f"| Throughput pico (R) | {st_min.throughput_read_peak_gbps:.1f} GB/s | {st_rec.throughput_read_peak_gbps:.1f} GB/s | {st_ideal.throughput_read_peak_gbps:.1f} GB/s |")
+    
     lines.append(f"| Tolerância a falhas | Nenhuma | 1 nó | 2 nós |")
     lines.append(f"| Risco operacional | Alto | Médio | Baixo |")
     lines.append("")
-    lines.append(f"**Conclusão:** O cenário **RECOMENDADO** oferece o melhor equilíbrio custo-risco para operação em produção.")
+    lines.append(f"**Conclusão:** O cenário **RECOMENDADO** oferece o melhor equilíbrio custo-risco para operação em produção. ")
+    if scenarios['recommended'].storage:
+        lines.append(f"Storage subdimensionado compromete resiliência e tempo de recuperação, mesmo com GPUs suficientes.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -216,7 +258,18 @@ def format_executive_markdown(
     lines.append(f"- Suporta picos de até {rec.config.peak_headroom_ratio*100:.0f}%")
     lines.append(f"- Tolera falha de 1 nó sem degradação ({rec.config.ha_mode.upper()})")
     lines.append(f"- Consome {rec.total_power_kw:.1f} kW e ocupa {rec.total_rack_u}U de rack")
+    
+    if storage_rec:
+        lines.append(f"- Requer {storage_rec.storage_total_tb:.1f} TB de storage ({storage_name})")
+        lines.append(f"  - IOPS pico: {storage_rec.iops_read_peak:,} leitura / {storage_rec.iops_write_peak:,} escrita")
+        lines.append(f"  - Throughput pico: {storage_rec.throughput_read_peak_gbps:.1f} GB/s leitura / {storage_rec.throughput_write_peak_gbps:.1f} GB/s escrita")
+    
     lines.append(f"- Mantém risco operacional em nível **aceitável** para produção")
+    lines.append("")
+    lines.append("**Governança:** Storage é recurso crítico. Subdimensionamento impacta:")
+    lines.append("- Tempo de recuperação (restart lento)")
+    lines.append("- Escalabilidade (gargalo em scale-out)")
+    lines.append("- Auditoria e conformidade (retenção inadequada de logs)")
     lines.append("")
     lines.append("---")
     lines.append("")

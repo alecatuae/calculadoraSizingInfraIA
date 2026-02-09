@@ -4,9 +4,10 @@ Cálculos de cenários (Mínimo, Recomendado, Ideal).
 
 import math
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from .calc_vram import VRAMResult
+from .calc_storage import StorageRequirements
 
 
 @dataclass
@@ -39,6 +40,9 @@ class ScenarioResult:
     total_power_kw: float = 0.0
     total_rack_u: int = 0
     total_heat_btu_hr: float = 0.0
+    
+    # Storage (será preenchido por calc_storage)
+    storage: Optional[StorageRequirements] = None
 
 
 def create_scenario_configs(

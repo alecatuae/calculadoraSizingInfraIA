@@ -14,6 +14,7 @@ from sizing.calc_kv import calc_kv_cache
 from sizing.calc_vram import calc_vram
 from sizing.calc_scenarios import create_scenario_configs, calc_scenario, ScenarioResult
 from sizing.calc_physical import calc_physical_consumption
+from sizing.calc_storage import calc_storage_requirements
 from sizing.report_full import format_full_report, format_json_report
 from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
@@ -93,6 +94,7 @@ def main():
             print("🎯 Calculando cenários (Mínimo, Recomendado, Ideal)...")
         
         scenarios: Dict[str, ScenarioResult] = {}
+        storage_warnings: List[str] = []
         
         for key, scenario_config in scenario_configs.items():
             # Para cada cenário, recalcular VRAM com kv_budget_ratio específico
@@ -120,7 +122,64 @@ def main():
             # Calcular físico
             calc_physical_consumption(scenario, server)
             
+            # Calcular storage
+            storage_reqs = calc_storage_requirements(
+                model=model,
+                server=server,
+                storage=storage,
+                concurrency=config.concurrency,
+                num_nodes=scenario.nodes_final,
+                sessions_per_node=vram_scenario.sessions_per_node,
+                weights_precision=weights_precision,
+                replicas_per_node=config.replicas_per_node,
+                scenario=key,
+                retention_days=30  # Será sobrescrito por cenário em calc_storage
+            )
+            scenario.storage = storage_reqs
+            
+            # Gerar alertas de storage
+            if storage_reqs.storage_total_tb > storage.usable_capacity_tb:
+                storage_warnings.append(
+                    f"🚨 [{scenario_config.name}] Volumetria total ({storage_reqs.storage_total_tb:.2f} TB) "
+                    f"excede capacidade utilizável do storage ({storage.usable_capacity_tb:.2f} TB)"
+                )
+            
+            if storage_reqs.iops_read_peak > storage.iops_read_max:
+                storage_warnings.append(
+                    f"⚠️ [{scenario_config.name}] IOPS leitura pico ({storage_reqs.iops_read_peak:,}) "
+                    f"excede capacidade do storage ({storage.iops_read_max:,})"
+                )
+            
+            if storage_reqs.iops_write_peak > storage.iops_write_max:
+                storage_warnings.append(
+                    f"⚠️ [{scenario_config.name}] IOPS escrita pico ({storage_reqs.iops_write_peak:,}) "
+                    f"excede capacidade do storage ({storage.iops_write_max:,})"
+                )
+            
+            if storage_reqs.throughput_read_peak_gbps > storage.throughput_read_gbps:
+                storage_warnings.append(
+                    f"⚠️ [{scenario_config.name}] Throughput leitura pico ({storage_reqs.throughput_read_peak_gbps:.2f} GB/s) "
+                    f"excede capacidade do storage ({storage.throughput_read_gbps:.2f} GB/s)"
+                )
+            
+            if storage_reqs.throughput_write_peak_gbps > storage.throughput_write_gbps:
+                storage_warnings.append(
+                    f"⚠️ [{scenario_config.name}] Throughput escrita pico ({storage_reqs.throughput_write_peak_gbps:.2f} GB/s) "
+                    f"excede capacidade do storage ({storage.throughput_write_gbps:.2f} GB/s)"
+                )
+            
+            # Alerta se cenário mínimo opera próximo do limite (>80%)
+            if key == "minimum" and storage_reqs.storage_total_tb / storage.usable_capacity_tb > 0.80:
+                storage_warnings.append(
+                    f"⚠️ [MÍNIMO] Volumetria opera acima de 80% da capacidade utilizável "
+                    f"({storage_reqs.storage_total_tb / storage.usable_capacity_tb * 100:.1f}%). "
+                    "Risco operacional elevado."
+                )
+            
             scenarios[key] = scenario
+        
+        # Consolidar alertas de storage
+        all_warnings.extend(storage_warnings)
         
         # 9. Gerar relatórios
         if config.verbose:
@@ -174,7 +233,8 @@ def main():
                 scenarios=scenarios,
                 concurrency=config.concurrency,
                 effective_context=kv_result.effective_context_clamped,
-                kv_precision=config.kv_precision
+                kv_precision=config.kv_precision,
+                storage_name=storage.name
             )
             
             exec_path = writer.write_executive_report(
