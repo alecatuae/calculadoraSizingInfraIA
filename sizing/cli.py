@@ -39,6 +39,7 @@ class CLIConfig:
     # Outputs
     executive_report: bool
     verbose: bool
+    validate_only: bool
 
 
 def create_arg_parser() -> argparse.ArgumentParser:
@@ -48,14 +49,14 @@ def create_arg_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
-    # Seleções obrigatórias
-    parser.add_argument("--model", required=True, help="Nome do modelo (ex: opt-oss-120b)")
-    parser.add_argument("--server", required=True, help="Nome do servidor (ex: dgx-b300)")
-    parser.add_argument("--storage", required=True, help="Nome do perfil de storage (ex: profile_default)")
+    # Seleções (obrigatórias exceto em --validate-only)
+    parser.add_argument("--model", help="Nome do modelo (ex: opt-oss-120b)")
+    parser.add_argument("--server", help="Nome do servidor (ex: dgx-b300)")
+    parser.add_argument("--storage", help="Nome do perfil de storage (ex: profile_default)")
     
-    # NFRs obrigatórios
-    parser.add_argument("--concurrency", type=int, required=True, help="Sessões simultâneas alvo")
-    parser.add_argument("--effective-context", type=int, required=True, help="Contexto efetivo em tokens")
+    # NFRs (obrigatórios exceto em --validate-only)
+    parser.add_argument("--concurrency", type=int, help="Sessões simultâneas alvo")
+    parser.add_argument("--effective-context", type=int, help="Contexto efetivo em tokens")
     
     # NFRs opcionais
     parser.add_argument("--kv-precision", choices=["fp8", "fp16", "bf16", "int8"], default="fp8",
@@ -95,6 +96,10 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true",
                         help="Modo verboso")
     
+    # Validação
+    parser.add_argument("--validate-only", action="store_true",
+                        help="Apenas validar arquivos JSON (schema e constraints) sem executar sizing")
+    
     return parser
 
 
@@ -102,6 +107,33 @@ def parse_cli_args() -> CLIConfig:
     """Parse argumentos CLI e retorna configuração."""
     parser = create_arg_parser()
     args = parser.parse_args()
+    
+    # Se --validate-only, não exigir model/server/storage/concurrency/effective-context
+    if args.validate_only:
+        # Criar um config dummy para validação
+        return CLIConfig(
+            model_name=args.model if args.model else "dummy",
+            server_name=args.server if args.server else "dummy",
+            storage_name=args.storage if args.storage else "dummy",
+            concurrency=args.concurrency if args.concurrency else 1,
+            effective_context=args.effective_context if args.effective_context else 1,
+            kv_precision=args.kv_precision,
+            kv_budget_ratio=args.kv_budget_ratio,
+            runtime_overhead_gib=args.runtime_overhead_gib,
+            peak_headroom_ratio=args.peak_headroom_ratio,
+            weights_precision=args.weights_precision,
+            weights_memory_gib=args.weights_memory_gib,
+            replicas_per_node=args.replicas_per_node,
+            tensor_parallel=args.tensor_parallel,
+            pipeline_parallel=args.pipeline_parallel,
+            model_artifact_size_gib=args.model_artifact_size_gib,
+            warmup_concurrency=args.warmup_concurrency,
+            warmup_read_pattern=args.warmup_read_pattern,
+            warmup_utilization_ratio=args.warmup_utilization_ratio,
+            executive_report=args.executive_report,
+            verbose=args.verbose,
+            validate_only=True
+        )
     
     return CLIConfig(
         model_name=args.model,
@@ -123,5 +155,6 @@ def parse_cli_args() -> CLIConfig:
         warmup_read_pattern=args.warmup_read_pattern,
         warmup_utilization_ratio=args.warmup_utilization_ratio,
         executive_report=args.executive_report,
-        verbose=args.verbose
+        verbose=args.verbose,
+        validate_only=args.validate_only
     )

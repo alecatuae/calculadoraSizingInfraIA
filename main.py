@@ -17,6 +17,7 @@ from sizing.calc_physical import calc_physical_consumption
 from sizing.calc_storage import calc_storage_requirements
 from sizing.calc_storage_validation import validate_storage_profile, format_validation_report, validation_to_dict
 from sizing.calc_warmup import calc_warmup_estimate, format_warmup_report, warmup_to_dict
+from sizing.validator import validate_all_configs, print_validation_report
 from sizing.report_full import format_full_report, format_json_report
 from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
@@ -29,11 +30,55 @@ def main():
         # 1. Parse CLI
         config = parse_cli_args()
         
+        # 2. Se --validate-only, executar apenas validação
+        if config.validate_only:
+            print("\n" + "="*100)
+            print("MODO DE VALIDAÇÃO: Validando schemas e constraints")
+            print("="*100 + "\n")
+            
+            loader = ConfigLoader(base_path=".", validate=True)
+            
+            # Carregar todos os arquivos (isso já valida schemas)
+            try:
+                loader.load_models()
+                loader.load_servers()
+                loader.load_storage()
+            except ValueError as e:
+                print(f"\n{e}\n")
+                sys.exit(1)
+            
+            # Obter dados brutos para validação adicional
+            models_data, servers_data, storage_data = loader.get_raw_data()
+            
+            # Validar tudo
+            errors, warnings = validate_all_configs(models_data, servers_data, storage_data)
+            
+            # Validar consistência física de storage (IOPS/Throughput/BlockSize)
+            print("\n" + "="*100)
+            print("VALIDAÇÃO DE STORAGE (Consistência Física IOPS/Throughput/BlockSize)")
+            print("="*100)
+            
+            for profile_dict in storage_data:
+                storage_profile = loader.get_storage(profile_dict["name"])
+                storage_validation = validate_storage_profile(storage_profile)
+                print(format_validation_report(storage_validation))
+                
+                if storage_validation.overall_status == "error":
+                    errors.append(f"Storage profile '{storage_profile.name}' tem divergência física crítica (>25%)")
+                elif storage_validation.overall_status == "warning":
+                    warnings.append(f"Storage profile '{storage_profile.name}' tem divergência física moderada (10-25%)")
+            
+            # Imprimir relatório final
+            success = print_validation_report(errors, warnings)
+            
+            sys.exit(0 if success else 1)
+        
+        # 3. Modo normal: carregar configurações
         if config.verbose:
             print("🔧 Carregando configurações...")
         
-        # 2. Carregar especificações
-        loader = ConfigLoader()
+        # Carregar especificações (com validação automática)
+        loader = ConfigLoader(base_path=".", validate=True)
         loader.load_models()
         loader.load_servers()
         loader.load_storage()
@@ -47,7 +92,7 @@ def main():
             print(f"   ✓ Servidor: {server.name}")
             print(f"   ✓ Storage: {storage.name}")
         
-        # 3. Calcular KV cache
+        # 4. Calcular KV cache
         if config.verbose:
             print("📊 Calculando KV cache...")
         

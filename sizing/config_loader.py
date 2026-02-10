@@ -1,24 +1,38 @@
 """
-Carregador de configurações JSON (models, servers, storage).
+Carregador de configurações JSON (models, servers, storage) com validação de schema.
 """
 
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Any, Tuple
 
 from .models import ModelSpec
 from .servers import ServerSpec
 from .storage import StorageProfile
+from .validator import validate_models, validate_servers, validate_storage_profiles
 
 
 class ConfigLoader:
-    """Carrega e gerencia especificações de models, servers e storage."""
+    """Carrega e gerencia especificações de models, servers e storage com validação."""
     
-    def __init__(self, base_path: str = "."):
+    def __init__(self, base_path: str = ".", validate: bool = True):
+        """
+        Args:
+            base_path: Caminho base para os arquivos JSON
+            validate: Se True, valida schemas ao carregar
+        """
         self.base_path = Path(base_path)
+        self.validate = validate
+        
+        # Cache
         self._models: Dict[str, ModelSpec] = {}
         self._servers: Dict[str, ServerSpec] = {}
         self._storage: Dict[str, StorageProfile] = {}
+        
+        # Dados brutos para validação
+        self._models_data: List[Dict[str, Any]] = []
+        self._servers_data: List[Dict[str, Any]] = []
+        self._storage_data: List[Dict[str, Any]] = []
     
     def load_models(self, filepath: str = "models.json") -> Dict[str, ModelSpec]:
         """Carrega especificações de modelos do JSON."""
@@ -29,14 +43,25 @@ class ConfigLoader:
                 data = json.load(f)
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"Arquivo de modelos não encontrado: {path}\n"
+                f"❌ Arquivo de modelos não encontrado: {path}\n"
                 "Certifique-se de que models.json existe no diretório."
             )
         except json.JSONDecodeError as e:
-            raise ValueError(f"Erro ao parsear {path}: {e}")
+            raise ValueError(f"❌ Erro ao parsear {path}: {e}")
         
+        # Armazenar dados brutos
+        self._models_data = data.get("models", [])
+        
+        # Validar schema se solicitado
+        if self.validate:
+            errors, warnings = validate_models(self._models_data)
+            if errors:
+                error_msg = "\n".join(errors)
+                raise ValueError(f"❌ Erros de validação em models.json:\n{error_msg}")
+        
+        # Parsear modelos
         models = {}
-        for m in data.get("models", []):
+        for m in self._models_data:
             model = ModelSpec(
                 name=m["name"],
                 num_layers=m["num_layers"],
@@ -49,17 +74,17 @@ class ConfigLoader:
                 sliding_window=m.get("sliding_window"),
                 default_kv_precision=m.get("default_kv_precision", "fp8"),
                 total_params_b=m.get("total_params_b"),
+                active_params_b=m.get("active_params_b"),
                 weights_memory_gib_fp16=m.get("weights_memory_gib_fp16"),
                 weights_memory_gib_bf16=m.get("weights_memory_gib_bf16"),
                 weights_memory_gib_fp8=m.get("weights_memory_gib_fp8"),
                 weights_memory_gib_int8=m.get("weights_memory_gib_int8"),
                 weights_memory_gib_int4=m.get("weights_memory_gib_int4"),
-                default_weights_precision=m.get("default_weights_precision"),
-                active_params_b=m.get("active_params_b"),
+                default_weights_precision=m.get("default_weights_precision", "fp8"),
                 notes=m.get("notes", "")
             )
             model.validate()
-            models[model.name] = model
+            models[model.name.lower()] = model
         
         self._models = models
         return models
@@ -73,28 +98,36 @@ class ConfigLoader:
                 data = json.load(f)
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"Arquivo de servidores não encontrado: {path}\n"
+                f"❌ Arquivo de servidores não encontrado: {path}\n"
                 "Certifique-se de que servers.json existe no diretório."
             )
         except json.JSONDecodeError as e:
-            raise ValueError(f"Erro ao parsear {path}: {e}")
+            raise ValueError(f"❌ Erro ao parsear {path}: {e}")
         
+        # Armazenar dados brutos
+        self._servers_data = data.get("servers", [])
+        
+        # Validar schema se solicitado
+        if self.validate:
+            errors, warnings = validate_servers(self._servers_data)
+            if errors:
+                error_msg = "\n".join(errors)
+                raise ValueError(f"❌ Erros de validação em servers.json:\n{error_msg}")
+        
+        # Parsear servidores
         servers = {}
-        for s in data.get("servers", []):
+        for s in self._servers_data:
             server = ServerSpec(
                 name=s["name"],
                 gpus=s["gpus"],
                 hbm_per_gpu_gb=s["hbm_per_gpu_gb"],
-                power_kw_idle=s.get("power_kw_idle"),
-                power_kw_max=s.get("power_kw_max"),
-                rack_units_u=s.get("rack_units_u"),
-                nvlink_bandwidth_tbps=s.get("nvlink_bandwidth_tbps"),
-                system_memory_tb=s.get("system_memory_tb"),
-                total_hbm_gb=s.get("total_hbm_gb"),
+                rack_units_u=s.get("rack_units_u", 10),
+                power_kw_max=s["power_kw_max"],
+                heat_output_btu_hr_max=s.get("heat_output_btu_hr_max"),
                 notes=s.get("notes", "")
             )
             server.validate()
-            servers[server.name] = server
+            servers[server.name.lower()] = server
         
         self._servers = servers
         return servers
@@ -108,14 +141,25 @@ class ConfigLoader:
                 data = json.load(f)
         except FileNotFoundError:
             raise FileNotFoundError(
-                f"Arquivo de storage não encontrado: {path}\n"
+                f"❌ Arquivo de storage não encontrado: {path}\n"
                 "Certifique-se de que storage.json existe no diretório."
             )
         except json.JSONDecodeError as e:
-            raise ValueError(f"Erro ao parsear {path}: {e}")
+            raise ValueError(f"❌ Erro ao parsear {path}: {e}")
         
+        # Armazenar dados brutos
+        self._storage_data = data.get("profiles", [])
+        
+        # Validar schema se solicitado
+        if self.validate:
+            errors, warnings = validate_storage_profiles(self._storage_data)
+            if errors:
+                error_msg = "\n".join(errors)
+                raise ValueError(f"❌ Erros de validação em storage.json:\n{error_msg}")
+        
+        # Parsear perfis de storage
         profiles = {}
-        for p in data.get("profiles", []):
+        for p in self._storage_data:
             # Retrocompatibilidade: converter Gbps para MB/s se necessário
             throughput_read_mbps = p.get("throughput_read_mbps", 0.0)
             throughput_write_mbps = p.get("throughput_write_mbps", 0.0)
@@ -146,37 +190,58 @@ class ConfigLoader:
                 notes=p.get("notes", "")
             )
             profile.validate()
-            profiles[profile.name] = profile
+            profiles[profile.name.lower()] = profile
         
         self._storage = profiles
         return profiles
     
     def get_model(self, name: str) -> ModelSpec:
-        """Retorna modelo por nome."""
-        if name not in self._models:
+        """Busca modelo por nome (case-insensitive)."""
+        if not self._models:
+            self.load_models()
+        
+        name_normalized = name.lower()
+        if name_normalized not in self._models:
             available = ", ".join(self._models.keys())
             raise ValueError(
-                f"Modelo '{name}' não encontrado.\n"
+                f"❌ Modelo '{name}' não encontrado em models.json.\n"
                 f"Modelos disponíveis: {available}"
             )
-        return self._models[name]
+        return self._models[name_normalized]
     
     def get_server(self, name: str) -> ServerSpec:
-        """Retorna servidor por nome."""
-        if name not in self._servers:
+        """Busca servidor por nome (case-insensitive)."""
+        if not self._servers:
+            self.load_servers()
+        
+        name_normalized = name.lower()
+        if name_normalized not in self._servers:
             available = ", ".join(self._servers.keys())
             raise ValueError(
-                f"Servidor '{name}' não encontrado.\n"
+                f"❌ Servidor '{name}' não encontrado em servers.json.\n"
                 f"Servidores disponíveis: {available}"
             )
-        return self._servers[name]
+        return self._servers[name_normalized]
     
     def get_storage(self, name: str) -> StorageProfile:
-        """Retorna perfil de storage por nome."""
-        if name not in self._storage:
+        """Busca perfil de storage por nome (case-insensitive)."""
+        if not self._storage:
+            self.load_storage()
+        
+        name_normalized = name.lower()
+        if name_normalized not in self._storage:
             available = ", ".join(self._storage.keys())
             raise ValueError(
-                f"Perfil de storage '{name}' não encontrado.\n"
+                f"❌ Perfil de storage '{name}' não encontrado em storage.json.\n"
                 f"Perfis disponíveis: {available}"
             )
-        return self._storage[name]
+        return self._storage[name_normalized]
+    
+    def get_raw_data(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Retorna dados brutos (não parseados) para validação.
+        
+        Returns:
+            (models_data, servers_data, storage_data)
+        """
+        return self._models_data, self._servers_data, self._storage_data

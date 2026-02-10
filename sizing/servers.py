@@ -22,6 +22,7 @@ class ServerSpec:
     power_kw_idle: Optional[float] = None
     power_kw_max: Optional[float] = None
     rack_units_u: Optional[int] = None
+    heat_output_btu_hr_max: Optional[float] = None
     
     # Optional networking/memory
     nvlink_bandwidth_tbps: Optional[float] = None
