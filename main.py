@@ -15,6 +15,8 @@ from sizing.calc_vram import calc_vram
 from sizing.calc_scenarios import create_scenario_configs, calc_scenario, ScenarioResult
 from sizing.calc_physical import calc_physical_consumption
 from sizing.calc_storage import calc_storage_requirements
+from sizing.calc_storage_validation import validate_storage_profile, format_validation_report, validation_to_dict
+from sizing.calc_warmup import calc_warmup_estimate, format_warmup_report, warmup_to_dict
 from sizing.report_full import format_full_report, format_json_report
 from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
@@ -82,6 +84,54 @@ def main():
         )
         
         all_warnings.extend(vram_result.warnings)
+        
+        # 6.5. VALIDAR CONSISTÊNCIA FÍSICA DE STORAGE (CRÍTICO - PODE BLOQUEAR)
+        if config.verbose:
+            print("🔍 Validando consistência física de storage (IOPS/Throughput/BlockSize)...")
+        
+        storage_validation = validate_storage_profile(storage)
+        
+        # Exibir validação no stdout
+        print("\n" + "=" * 100)
+        print("VALIDAÇÃO DE STORAGE")
+        print("=" * 100)
+        print(format_validation_report(storage_validation))
+        print("=" * 100 + "\n")
+        
+        # BLOQUEIO: Se status == "error", NÃO gerar relatórios
+        if storage_validation.overall_status == "error":
+            print("\n❌ ERRO CRÍTICO: Divergência física no perfil de storage.")
+            print(f"   Profile: {storage.name}")
+            print(f"\n   {storage_validation.overall_status.upper()}: Inconsistência entre IOPS, Throughput e Block Size.\n")
+            print("   A fórmula física Throughput(MB/s) = (IOPS × BlockSize(KB)) / 1024 não é respeitada.")
+            print(f"   Divergência > {25:.0f}% (threshold de erro).\n")
+            print("   Corrija o arquivo storage.json com valores fisicamente consistentes.")
+            print("   Relatórios NÃO serão gerados.\n")
+            sys.exit(1)
+        
+        # Se status == "warning", adicionar aos alertas mas prosseguir
+        if storage_validation.overall_status == "warning":
+            all_warnings.extend(storage_validation.messages)
+            all_warnings.extend(storage_validation.read_validation.messages)
+            all_warnings.extend(storage_validation.write_validation.messages)
+        
+        # 6.6. CALCULAR WARMUP/COLD START
+        if config.verbose:
+            print("🔥 Calculando estimativa de warmup/cold start...")
+        
+        # Determinar tamanho do artefato (usar weights_memory se não especificado)
+        artifact_size_gib = config.model_artifact_size_gib
+        if artifact_size_gib is None:
+            # Usar memória de pesos como proxy
+            artifact_size_gib = vram_result.fixed_model_gib
+        
+        warmup_estimate = calc_warmup_estimate(
+            storage=storage,
+            artifact_size_gib=artifact_size_gib,
+            warmup_concurrency=config.warmup_concurrency,
+            read_pattern=config.warmup_read_pattern,
+            utilization_ratio=config.warmup_utilization_ratio
+        )
         
         # 7. Criar configurações dos 3 cenários
         scenario_configs = create_scenario_configs(
@@ -164,16 +214,20 @@ def main():
                     f"excede capacidade do storage ({storage.iops_write_max:,})"
                 )
             
-            if storage_reqs.throughput_read_peak_gbps > storage.throughput_read_gbps:
+            # Converter GB/s para MB/s para comparação
+            storage_throughput_read_gbps = storage.throughput_read_mbps / 125.0
+            storage_throughput_write_gbps = storage.throughput_write_mbps / 125.0
+            
+            if storage_reqs.throughput_read_peak_gbps > storage_throughput_read_gbps:
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] Throughput leitura pico ({storage_reqs.throughput_read_peak_gbps:.2f} GB/s) "
-                    f"excede capacidade do storage ({storage.throughput_read_gbps:.2f} GB/s)"
+                    f"excede capacidade do storage ({storage_throughput_read_gbps:.2f} GB/s)"
                 )
             
-            if storage_reqs.throughput_write_peak_gbps > storage.throughput_write_gbps:
+            if storage_reqs.throughput_write_peak_gbps > storage_throughput_write_gbps:
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] Throughput escrita pico ({storage_reqs.throughput_write_peak_gbps:.2f} GB/s) "
-                    f"excede capacidade do storage ({storage.throughput_write_gbps:.2f} GB/s)"
+                    f"excede capacidade do storage ({storage_throughput_write_gbps:.2f} GB/s)"
                 )
             
             # Alerta se cenário mínimo opera próximo do limite (>80%)

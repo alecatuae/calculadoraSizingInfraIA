@@ -21,9 +21,13 @@ class StorageProfile:
     iops_read_max: int = 0
     iops_write_max: int = 0
     
-    # Throughput (GB/s)
-    throughput_read_gbps: float = 0.0
-    throughput_write_gbps: float = 0.0
+    # Throughput (MB/s) - base decimal, para cálculo com block size
+    throughput_read_mbps: float = 0.0
+    throughput_write_mbps: float = 0.0
+    
+    # Block Size (KB) - para validação de consistência física
+    block_size_kb_read: float = 0.0
+    block_size_kb_write: float = 0.0
     
     # Latency percentiles (ms)
     latency_read_ms_p50: float = 0.0
@@ -50,7 +54,7 @@ class StorageProfile:
             raise ValueError(f"Storage {self.name}: iops_read_max must be >= 0")
         if self.iops_write_max < 0:
             raise ValueError(f"Storage {self.name}: iops_write_max must be >= 0")
-        if self.throughput_read_gbps < 0:
-            raise ValueError(f"Storage {self.name}: throughput_read_gbps must be >= 0")
-        if self.throughput_write_gbps < 0:
-            raise ValueError(f"Storage {self.name}: throughput_write_gbps must be >= 0")
+        if self.throughput_read_mbps < 0:
+            raise ValueError(f"Storage {self.name}: throughput_read_mbps must be >= 0")
+        if self.throughput_write_mbps < 0:
+            raise ValueError(f"Storage {self.name}: throughput_write_mbps must be >= 0")

@@ -30,6 +30,12 @@ class CLIConfig:
     tensor_parallel: Optional[int]
     pipeline_parallel: int
     
+    # Warmup/Cold Start
+    model_artifact_size_gib: Optional[float]
+    warmup_concurrency: int
+    warmup_read_pattern: str
+    warmup_utilization_ratio: float
+    
     # Outputs
     executive_report: bool
     verbose: bool
@@ -73,6 +79,16 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pipeline-parallel", type=int, default=1,
                         help="Grau de paralelismo de pipeline (default: 1)")
     
+    # Warmup/Cold Start
+    parser.add_argument("--model-artifact-size-gib", type=float,
+                        help="Tamanho do artefato do modelo em GiB para cálculo de warmup (default: weights_memory)")
+    parser.add_argument("--warmup-concurrency", type=int, default=1,
+                        help="Pods iniciando em paralelo durante warmup/scale-out (default: 1)")
+    parser.add_argument("--warmup-read-pattern", choices=["seq", "rand"], default="seq",
+                        help="Padrão de leitura durante warmup: sequencial ou random (default: seq)")
+    parser.add_argument("--warmup-utilization-ratio", type=float, default=0.8,
+                        help="Fração do storage max utilizável durante warmup (default: 0.8)")
+    
     # Saídas
     parser.add_argument("--executive-report", action="store_true",
                         help="Gerar relatório executivo adicional em Markdown")
@@ -102,6 +118,10 @@ def parse_cli_args() -> CLIConfig:
         replicas_per_node=args.replicas_per_node,
         tensor_parallel=args.tensor_parallel,
         pipeline_parallel=args.pipeline_parallel,
+        model_artifact_size_gib=args.model_artifact_size_gib,
+        warmup_concurrency=args.warmup_concurrency,
+        warmup_read_pattern=args.warmup_read_pattern,
+        warmup_utilization_ratio=args.warmup_utilization_ratio,
         executive_report=args.executive_report,
         verbose=args.verbose
     )

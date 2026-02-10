@@ -93,8 +93,8 @@ def format_full_report(
     lines.append(f"  • Capacidade utilizável: {storage.usable_capacity_tb:.2f} TB")
     lines.append(f"  • IOPS leitura (max): {storage.iops_read_max:,}")
     lines.append(f"  • IOPS escrita (max): {storage.iops_write_max:,}")
-    lines.append(f"  • Throughput leitura: {storage.throughput_read_gbps:.2f} GB/s")
-    lines.append(f"  • Throughput escrita: {storage.throughput_write_gbps:.2f} GB/s")
+    lines.append(f"  • Throughput leitura: {storage.throughput_read_mbps:.1f} MB/s ({storage.throughput_read_mbps/125:.2f} GB/s)")
+    lines.append(f"  • Throughput escrita: {storage.throughput_write_mbps:.1f} MB/s ({storage.throughput_write_mbps/125:.2f} GB/s)")
     lines.append(f"  • Latência leitura (p50/p99): {storage.latency_read_ms_p50:.2f} / {storage.latency_read_ms_p99:.2f} ms")
     lines.append(f"  • Latência escrita (p50/p99): {storage.latency_write_ms_p50:.2f} / {storage.latency_write_ms_p99:.2f} ms")
     if storage.rack_units_u > 0 or storage.power_kw > 0:
@@ -242,8 +242,10 @@ def format_json_report(
             "usable_capacity_tb": storage.usable_capacity_tb,
             "iops_read_max": storage.iops_read_max,
             "iops_write_max": storage.iops_write_max,
-            "throughput_read_gbps": storage.throughput_read_gbps,
-            "throughput_write_gbps": storage.throughput_write_gbps,
+            "throughput_read_mbps": storage.throughput_read_mbps,
+            "throughput_write_mbps": storage.throughput_write_mbps,
+            "block_size_kb_read": storage.block_size_kb_read,
+            "block_size_kb_write": storage.block_size_kb_write,
             "latency_read_ms_p50": storage.latency_read_ms_p50,
             "latency_read_ms_p99": storage.latency_read_ms_p99,
             "latency_write_ms_p50": storage.latency_write_ms_p50,

@@ -116,6 +116,16 @@ class ConfigLoader:
         
         profiles = {}
         for p in data.get("profiles", []):
+            # Retrocompatibilidade: converter Gbps para MB/s se necessário
+            throughput_read_mbps = p.get("throughput_read_mbps", 0.0)
+            throughput_write_mbps = p.get("throughput_write_mbps", 0.0)
+            
+            # Se não tem MB/s mas tem Gbps (formato antigo), converter
+            if throughput_read_mbps == 0.0 and "throughput_read_gbps" in p:
+                throughput_read_mbps = p["throughput_read_gbps"] * 125.0  # Gbps → MB/s
+            if throughput_write_mbps == 0.0 and "throughput_write_gbps" in p:
+                throughput_write_mbps = p["throughput_write_gbps"] * 125.0
+            
             profile = StorageProfile(
                 name=p["name"],
                 type=p["type"],
@@ -123,8 +133,10 @@ class ConfigLoader:
                 usable_capacity_tb=p.get("usable_capacity_tb", 0.0),
                 iops_read_max=p.get("iops_read_max", 0),
                 iops_write_max=p.get("iops_write_max", 0),
-                throughput_read_gbps=p.get("throughput_read_gbps", 0.0),
-                throughput_write_gbps=p.get("throughput_write_gbps", 0.0),
+                throughput_read_mbps=throughput_read_mbps,
+                throughput_write_mbps=throughput_write_mbps,
+                block_size_kb_read=p.get("block_size_kb_read", 0.0),
+                block_size_kb_write=p.get("block_size_kb_write", 0.0),
                 latency_read_ms_p50=p.get("latency_read_ms_p50", 0.0),
                 latency_read_ms_p99=p.get("latency_read_ms_p99", 0.0),
                 latency_write_ms_p50=p.get("latency_write_ms_p50", 0.0),
