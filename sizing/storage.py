@@ -31,6 +31,10 @@ class StorageProfile:
     latency_write_ms_p50: float = 0.0
     latency_write_ms_p99: float = 0.0
     
+    # Físico (datacenter)
+    rack_units_u: int = 0
+    power_kw: float = 0.0
+    
     # Metadata
     notes: str = ""
     

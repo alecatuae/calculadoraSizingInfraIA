@@ -137,6 +137,14 @@ def main():
             )
             scenario.storage = storage_reqs
             
+            # Calcular físico de storage
+            scenario.storage_rack_u = storage.rack_units_u
+            scenario.storage_power_kw = storage.power_kw
+            
+            # Calcular totais (Compute + Storage)
+            scenario.total_power_kw_with_storage = scenario.total_power_kw + scenario.storage_power_kw
+            scenario.total_rack_u_with_storage = scenario.total_rack_u + scenario.storage_rack_u
+            
             # Gerar alertas de storage
             if storage_reqs.storage_total_tb > storage.usable_capacity_tb:
                 storage_warnings.append(

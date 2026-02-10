@@ -13,7 +13,9 @@
       "latency_read_ms_p99": 0.15,
       "latency_write_ms_p50": 0.10,
       "latency_write_ms_p99": 0.20,
-      "notes": "Perfil padrão: NVMe local de alta performance (ex.: 8x U.2 NVMe 7.68TB em RAID ou pool agregado). Capacidade: 61.44TB bruto, 56TB usável (após RAID/overhead). IOPS e throughput agregados."
+      "rack_units_u": 2,
+      "power_kw": 0.5,
+      "notes": "Perfil padrão: NVMe local de alta performance (ex.: 8x U.2 NVMe 7.68TB em RAID ou pool agregado em enclosure 2U). Capacidade: 61.44TB bruto, 56TB usável (após RAID/overhead). IOPS e throughput agregados. Consumo: 2U rack, ~0.5 kW."
     },
     {
       "name": "profile_network_ssd",
@@ -28,7 +30,9 @@
       "latency_read_ms_p99": 2.0,
       "latency_write_ms_p50": 1.0,
       "latency_write_ms_p99": 3.5,
-      "notes": "Storage de rede SSD (ex.: NFS sobre RDMA, Ceph all-flash). Latências maiores que NVMe local, mas com capacidade elástica. Capacidade: pool de 500TB bruto, 450TB usável."
+      "rack_units_u": 4,
+      "power_kw": 2.0,
+      "notes": "Storage de rede SSD (ex.: NFS sobre RDMA, Ceph all-flash, NetApp A-Series, Pure FlashArray). Latências maiores que NVMe local, mas com capacidade elástica. Capacidade: pool de 500TB bruto, 450TB usável. Appliance típico: 4U, ~2.0 kW."
     },
     {
       "name": "profile_cloud_premium",
@@ -43,7 +47,9 @@
       "latency_read_ms_p99": 5.0,
       "latency_write_ms_p50": 1.5,
       "latency_write_ms_p99": 6.0,
-      "notes": "Block storage premium em nuvem (ex.: AWS gp3 com IOPS provisionado, GCP Extreme PD). Menor latência e throughput que on-prem. Capacidade: 100TB provisionado, 95TB usável (5% reserva)."
+      "rack_units_u": 0,
+      "power_kw": 0.0,
+      "notes": "Block storage premium em nuvem (ex.: AWS gp3 com IOPS provisionado, GCP Extreme PD). Menor latência e throughput que on-prem. Capacidade: 100TB provisionado, 95TB usável (5% reserva). Infraestrutura gerenciada pelo provedor cloud (não ocupa rack ou energia do cliente)."
     }
   ]
 }

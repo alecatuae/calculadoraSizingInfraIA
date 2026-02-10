@@ -40,25 +40,25 @@ def format_exec_summary(
     lines.append("")
     
     # Tabela de cenários
-    lines.append("-" * 120)
-    header = f"{'Cenário':<20} {'Nós':<8} {'kW':<10} {'Rack':<8} {'Storage (TB)':<15} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
+    lines.append("-" * 130)
+    header = f"{'Cenário':<20} {'Nós':<8} {'kW Total':<12} {'Rack Total':<12} {'Storage (TB)':<15} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
     lines.append(header)
-    lines.append("-" * 120)
+    lines.append("-" * 130)
     
     for key in ["minimum", "recommended", "ideal"]:
         s = scenarios[key]
         storage_tb = f"{s.storage.storage_total_tb:.1f}" if s.storage else "N/A"
-        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw:<10.1f} {s.total_rack_u:<8} {storage_tb:<15} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
+        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw_with_storage:<12.1f} {s.total_rack_u_with_storage:<12} {storage_tb:<15} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
         lines.append(row)
     
-    lines.append("-" * 120)
+    lines.append("-" * 130)
     lines.append("")
     
     # Recomendação
     rec = scenarios["recommended"]
     storage_info = f", {rec.storage.storage_total_tb:.1f} TB storage" if rec.storage else ""
     lines.append(
-        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw:.1f} kW, {rec.total_rack_u}U{storage_info}) "
+        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw_with_storage:.1f} kW total, {rec.total_rack_u_with_storage}U total{storage_info}) "
         f"atende os requisitos com tolerância a falhas ({rec.config.ha_mode.upper()})."
     )
     lines.append("")
@@ -181,8 +181,8 @@ def format_executive_markdown(
         lines.append(f"| Sessões por nó (operando) | {s.sessions_per_node_effective} |")
         lines.append(f"| KV por sessão | {s.vram.vram_per_session_gib:.2f} GiB |")
         lines.append(f"| VRAM total por nó | {s.vram_total_node_effective_gib:.1f} GiB ({s.hbm_utilization_ratio_effective*100:.1f}% HBM) |")
-        lines.append(f"| Energia total | {s.total_power_kw:.1f} kW |")
-        lines.append(f"| Espaço em rack | {s.total_rack_u}U |")
+        lines.append(f"| **Energia (Compute + Storage)** | **{s.total_power_kw_with_storage:.1f} kW** ({s.total_power_kw:.1f} + {s.storage_power_kw:.1f}) |")
+        lines.append(f"| **Rack (Compute + Storage)** | **{s.total_rack_u_with_storage}U** ({s.total_rack_u} + {s.storage_rack_u}) |")
         
         # Storage metrics
         if s.storage:
@@ -227,8 +227,8 @@ def format_executive_markdown(
     lines.append("| Critério | Mínimo | Recomendado | Ideal |")
     lines.append("|----------|--------|-------------|-------|")
     lines.append(f"| Nós DGX | {scenarios['minimum'].nodes_final} | {scenarios['recommended'].nodes_final} | {scenarios['ideal'].nodes_final} |")
-    lines.append(f"| Energia (kW) | {scenarios['minimum'].total_power_kw:.1f} | {scenarios['recommended'].total_power_kw:.1f} | {scenarios['ideal'].total_power_kw:.1f} |")
-    lines.append(f"| Rack (U) | {scenarios['minimum'].total_rack_u} | {scenarios['recommended'].total_rack_u} | {scenarios['ideal'].total_rack_u} |")
+    lines.append(f"| Energia Total (kW) | {scenarios['minimum'].total_power_kw_with_storage:.1f} | {scenarios['recommended'].total_power_kw_with_storage:.1f} | {scenarios['ideal'].total_power_kw_with_storage:.1f} |")
+    lines.append(f"| Rack Total (U) | {scenarios['minimum'].total_rack_u_with_storage} | {scenarios['recommended'].total_rack_u_with_storage} | {scenarios['ideal'].total_rack_u_with_storage} |")
     
     # Storage comparison
     if scenarios['minimum'].storage and scenarios['recommended'].storage and scenarios['ideal'].storage:

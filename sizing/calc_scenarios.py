@@ -36,13 +36,21 @@ class ScenarioResult:
     vram_total_node_effective_gib: float
     hbm_utilization_ratio_effective: float
     
-    # Físico (será preenchido por calc_physical)
+    # Físico - Compute (será preenchido por calc_physical)
     total_power_kw: float = 0.0
     total_rack_u: int = 0
     total_heat_btu_hr: float = 0.0
     
     # Storage (será preenchido por calc_storage)
     storage: Optional[StorageRequirements] = None
+    
+    # Físico - Storage
+    storage_rack_u: int = 0
+    storage_power_kw: float = 0.0
+    
+    # Físico - Total (Compute + Storage)
+    total_power_kw_with_storage: float = 0.0
+    total_rack_u_with_storage: int = 0
 
 
 def create_scenario_configs(

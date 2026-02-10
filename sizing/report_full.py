@@ -97,6 +97,8 @@ def format_full_report(
     lines.append(f"  • Throughput escrita: {storage.throughput_write_gbps:.2f} GB/s")
     lines.append(f"  • Latência leitura (p50/p99): {storage.latency_read_ms_p50:.2f} / {storage.latency_read_ms_p99:.2f} ms")
     lines.append(f"  • Latência escrita (p50/p99): {storage.latency_write_ms_p50:.2f} / {storage.latency_write_ms_p99:.2f} ms")
+    if storage.rack_units_u > 0 or storage.power_kw > 0:
+        lines.append(f"  • Consumo físico: {storage.rack_units_u}U rack, {storage.power_kw:.1f} kW")
     lines.append("")
     
     # Seção 3: Resultados por Cenário
@@ -132,8 +134,12 @@ def format_full_report(
             lines.append("")
         
         lines.append("INFRAESTRUTURA FÍSICA:")
-        lines.append(f"  • Energia total: {s.total_power_kw:.1f} kW")
-        lines.append(f"  • Rack total: {s.total_rack_u}U")
+        lines.append(f"  • Energia (Compute): {s.total_power_kw:.1f} kW")
+        lines.append(f"  • Energia (Storage): {s.storage_power_kw:.1f} kW")
+        lines.append(f"  • Energia (Total): {s.total_power_kw_with_storage:.1f} kW")
+        lines.append(f"  • Rack (Compute): {s.total_rack_u}U")
+        lines.append(f"  • Rack (Storage): {s.storage_rack_u}U")
+        lines.append(f"  • Rack (Total): {s.total_rack_u_with_storage}U")
         lines.append(f"  • HA: {s.config.ha_mode}")
         lines.append("")
     
@@ -191,7 +197,11 @@ def format_json_report(
                 "nodes_final": s.nodes_final,
                 "total_power_kw": round(s.total_power_kw, 2),
                 "total_rack_u": s.total_rack_u,
-                "total_heat_btu_hr": round(s.total_heat_btu_hr, 0)
+                "total_heat_btu_hr": round(s.total_heat_btu_hr, 0),
+                "storage_power_kw": round(s.storage_power_kw, 2),
+                "storage_rack_u": s.storage_rack_u,
+                "total_power_kw_with_storage": round(s.total_power_kw_with_storage, 2),
+                "total_rack_u_with_storage": s.total_rack_u_with_storage
             }
         }
         
@@ -237,7 +247,9 @@ def format_json_report(
             "latency_read_ms_p50": storage.latency_read_ms_p50,
             "latency_read_ms_p99": storage.latency_read_ms_p99,
             "latency_write_ms_p50": storage.latency_write_ms_p50,
-            "latency_write_ms_p99": storage.latency_write_ms_p99
+            "latency_write_ms_p99": storage.latency_write_ms_p99,
+            "rack_units_u": storage.rack_units_u,
+            "power_kw": storage.power_kw
         },
         "scenarios": {
             "minimum": scenario_to_dict(scenarios["minimum"]),

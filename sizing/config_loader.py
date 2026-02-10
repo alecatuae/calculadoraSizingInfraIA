@@ -129,6 +129,8 @@ class ConfigLoader:
                 latency_read_ms_p99=p.get("latency_read_ms_p99", 0.0),
                 latency_write_ms_p50=p.get("latency_write_ms_p50", 0.0),
                 latency_write_ms_p99=p.get("latency_write_ms_p99", 0.0),
+                rack_units_u=p.get("rack_units_u", 0),
+                power_kw=p.get("power_kw", 0.0),
                 notes=p.get("notes", "")
             )
             profile.validate()
