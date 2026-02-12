@@ -56,6 +56,25 @@
       "rack_units_u": 0,
       "power_kw": 0.0,
       "notes": "Block storage premium em nuvem (ex.: AWS gp3 com IOPS provisionado, GCP Extreme PD). Throughput: 500 MB/s leitura/escrita (4 Gbps). Block size: 3.2-4.3 KB (small block, cloud-optimized). Menor latência e throughput que on-prem. Capacidade: 100TB provisionado, 95TB usável (5% reserva). Infraestrutura gerenciada pelo provedor cloud (não ocupa rack ou energia do cliente)."
+    },
+    {
+      "name": "netapp_a_series",
+      "type": "nvme",
+      "capacity_total_tb": 368.64,
+      "usable_capacity_tb": 290.43,
+      "iops_read_max": 1126081,
+      "iops_write_max": 1126081,
+      "throughput_read_mbps": 37389.42,
+      "throughput_write_mbps": 37389.42,
+      "block_size_kb_read": 34.0,
+      "block_size_kb_write": 34.0,
+      "latency_read_ms_p50": 0.08,
+      "latency_read_ms_p99": 0.15,
+      "latency_write_ms_p50": 0.10,
+      "latency_write_ms_p99": 0.20,
+      "rack_units_u": 14,
+      "power_kw": 12.8,
+      "notes": "Perfil Netapp AFX"
     }
   ]
 }

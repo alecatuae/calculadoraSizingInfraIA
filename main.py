@@ -271,47 +271,75 @@ def main():
             scenario.total_power_kw_with_storage = scenario.total_power_kw + scenario.storage_power_kw
             scenario.total_rack_u_with_storage = scenario.total_rack_u + scenario.storage_rack_u
             
-            # Gerar alertas de storage
+            # Gerar alertas de storage com impacto e ações recomendadas
+            # Calcular métricas auxiliares para alertas mais ricos
+            storage_throughput_read_gbps = storage.throughput_read_mbps / 1024.0
+            storage_throughput_write_gbps = storage.throughput_write_mbps / 1024.0
+            
+            # 1. Alerta de Volumetria Excedida (CRÍTICO)
             if storage_reqs.storage_total_recommended_tb > storage.usable_capacity_tb:
+                deficit_tb = storage_reqs.storage_total_recommended_tb - storage.usable_capacity_tb
                 storage_warnings.append(
                     f"🚨 [{scenario_config.name}] Volumetria total RECOMENDADA ({storage_reqs.storage_total_recommended_tb:.2f} TB, base: {storage_reqs.storage_total_base_tb:.2f} TB) "
-                    f"excede capacidade utilizável do storage ({storage.usable_capacity_tb:.2f} TB)"
+                    f"excede capacidade utilizável do storage ({storage.usable_capacity_tb:.2f} TB). "
+                    f"IMPACTO: Faltará espaço para subir ou escalar o ambiente (déficit: {deficit_tb:.2f} TB). "
+                    f"AÇÃO: Recomenda-se storage com capacidade mínima de {storage_reqs.storage_total_recommended_tb:.2f} TB ou reduzir retenção de logs."
                 )
             
+            # 2. Alerta de IOPS Leitura Excedido
             if storage_reqs.iops_read_peak > storage.iops_read_max:
+                iops_deficit = storage_reqs.iops_read_peak - storage.iops_read_max
+                iops_factor = storage_reqs.iops_read_peak / storage.iops_read_max
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] IOPS leitura pico ({storage_reqs.iops_read_peak:,}) "
-                    f"excede capacidade do storage ({storage.iops_read_max:,})"
+                    f"excede capacidade do storage ({storage.iops_read_max:,}). "
+                    f"IMPACTO: Operações de leitura ficarão {iops_factor:.1f}x mais lentas sob carga pico, causando latência no acesso ao cache. "
+                    f"AÇÃO: Upgrade storage com IOPS mínimo de {storage_reqs.iops_read_peak:,} ou reduza a concorrência."
                 )
             
+            # 3. Alerta de IOPS Escrita Excedido
             if storage_reqs.iops_write_peak > storage.iops_write_max:
+                iops_write_deficit = storage_reqs.iops_write_peak - storage.iops_write_max
+                iops_write_factor = storage_reqs.iops_write_peak / storage.iops_write_max
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] IOPS escrita pico ({storage_reqs.iops_write_peak:,}) "
-                    f"excede capacidade do storage ({storage.iops_write_max:,})"
+                    f"excede capacidade do storage ({storage.iops_write_max:,}). "
+                    f"IMPACTO: Flush de logs ficará {iops_write_factor:.1f}x mais lento sob carga pico, podendo causar perda de dados se buffers saturarem. "
+                    f"AÇÃO: Upgrade storage com IOPS mínimo de {storage_reqs.iops_write_peak:,} ou reduza o volume de logging."
                 )
             
-            # Converter GB/s para MB/s para comparação
-            storage_throughput_read_gbps = storage.throughput_read_mbps / 125.0
-            storage_throughput_write_gbps = storage.throughput_write_mbps / 125.0
-            
+            # 4. Alerta de Throughput Leitura Excedido
             if storage_reqs.throughput_read_peak_gbps > storage_throughput_read_gbps:
+                throughput_deficit = storage_reqs.throughput_read_peak_gbps - storage_throughput_read_gbps
+                throughput_factor = storage_reqs.throughput_read_peak_gbps / storage_throughput_read_gbps
+                actual_load_time = capacity_policy.target_load_time_sec * throughput_factor
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] Throughput leitura pico ({storage_reqs.throughput_read_peak_gbps:.2f} GB/s) "
-                    f"excede capacidade do storage ({storage_throughput_read_gbps:.2f} GB/s)"
+                    f"excede capacidade do storage ({storage_throughput_read_gbps:.2f} GB/s). "
+                    f"IMPACTO: Tempo de restart/scale-out será {throughput_factor:.1f}x maior (~{actual_load_time:.0f}s ao invés de {capacity_policy.target_load_time_sec:.0f}s), aumentando RTO. "
+                    f"AÇÃO: Aumente throughput do storage para {storage_reqs.throughput_read_peak_gbps:.2f} GB/s ou ajuste target_load_time_sec para {actual_load_time:.0f}s em parameters.json."
                 )
             
+            # 5. Alerta de Throughput Escrita Excedido
             if storage_reqs.throughput_write_peak_gbps > storage_throughput_write_gbps:
+                throughput_write_deficit = storage_reqs.throughput_write_peak_gbps - storage_throughput_write_gbps
+                throughput_write_factor = storage_reqs.throughput_write_peak_gbps / storage_throughput_write_gbps
                 storage_warnings.append(
                     f"⚠️ [{scenario_config.name}] Throughput escrita pico ({storage_reqs.throughput_write_peak_gbps:.2f} GB/s) "
-                    f"excede capacidade do storage ({storage_throughput_write_gbps:.2f} GB/s)"
+                    f"excede capacidade do storage ({storage_throughput_write_gbps:.2f} GB/s). "
+                    f"IMPACTO: Flush de logs ficará {throughput_write_factor:.1f}x mais lento sob carga pico, podendo causar backpressure e perda de logs. "
+                    f"AÇÃO: Upgrade storage com throughput mínimo de {storage_reqs.throughput_write_peak_gbps:.2f} GB/s ou reduza o volume de logging."
                 )
             
-            # Alerta se cenário mínimo opera próximo do limite (>80%)
+            # 6. Alerta de Volumetria Mínima Acima de 80%
             if key == "minimum" and storage_reqs.storage_total_recommended_tb / storage.usable_capacity_tb > 0.80:
+                usage_pct = storage_reqs.storage_total_recommended_tb / storage.usable_capacity_tb * 100
+                headroom_tb = storage.usable_capacity_tb - storage_reqs.storage_total_recommended_tb
                 storage_warnings.append(
                     f"⚠️ [MÍNIMO] Volumetria recomendada opera acima de 80% da capacidade utilizável "
-                    f"({storage_reqs.storage_total_recommended_tb / storage.usable_capacity_tb * 100:.1f}%). "
-                    "Risco operacional elevado."
+                    f"({usage_pct:.1f}%, sobra apenas {headroom_tb:.2f} TB). "
+                    f"IMPACTO: Risco operacional elevado - sem margem para crescimento orgânico, picos de logs ou rollback de versões. "
+                    f"AÇÃO: Considere storage com capacidade adicional de {storage_reqs.storage_total_recommended_tb * 0.3:.2f} TB (~30% buffer) ou reduza retenção de logs."
                 )
             
             scenarios[key] = scenario
