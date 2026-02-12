@@ -146,6 +146,50 @@ def format_full_report(
     lines.append("  Esta margem é governada por política organizacional e pode ser ajustada via --capacity-margin CLI ou parameters.json.")
     lines.append("")
     
+    # Seção 2.7: Volume da Plataforma por Servidor
+    lines.append("┌" + "─" * 98 + "┐")
+    lines.append("│" + " SEÇÃO 2.7: VOLUME DA PLATAFORMA POR SERVIDOR".ljust(98) + "│")
+    lines.append("└" + "─" * 98 + "┘")
+    lines.append("")
+    
+    # Obter breakdown da plataforma do primeiro cenário
+    platform_rationale = rec.storage.rationale.get("platform_storage", {})
+    platform_inputs = platform_rationale.get("inputs", {})
+    
+    lines.append(f"Volume Estrutural: {rec.storage.platform_per_server_gb:.0f} GB/servidor ({rec.storage.platform_per_server_tb:.2f} TB/servidor)")
+    lines.append(f"Fonte: {platform_rationale.get('inputs', {}).get('num_nodes', 'N/A')} nós × {rec.storage.platform_per_server_tb:.2f} TB = {rec.storage.platform_volume_total_tb:.2f} TB total")
+    lines.append("")
+    
+    lines.append("TABELA DE BREAKDOWN POR COMPONENTE:")
+    lines.append("")
+    lines.append(f"{'Componente':<40} {'Volume/Servidor (GB)':<22} {'Volume Total (TB)':<20} {'Observação':<20}")
+    lines.append("-" * 102)
+    
+    os_gb = platform_inputs.get("os_installation_gb", 0)
+    ai_enterprise_gb = platform_inputs.get("nvidia_ai_enterprise_gb", 0)
+    container_runtime_gb = platform_inputs.get("container_runtime_gb", 0)
+    engines_gb = platform_inputs.get("model_runtime_engines_gb", 0)
+    deps_gb = platform_inputs.get("platform_dependencies_gb", 0)
+    config_gb = platform_inputs.get("config_and_metadata_gb", 0)
+    num_nodes = rec.nodes_final
+    
+    lines.append(f"{'Sistema Operacional':<40} {os_gb:<22.0f} {os_gb*num_nodes/1024:<20.2f} {'Ubuntu/RHEL+drivers':<20}")
+    lines.append(f"{'NVIDIA AI Enterprise':<40} {ai_enterprise_gb:<22.0f} {ai_enterprise_gb*num_nodes/1024:<20.2f} {'CUDA,cuDNN,TensorRT':<20}")
+    lines.append(f"{'Runtime de Containers':<40} {container_runtime_gb:<22.0f} {container_runtime_gb*num_nodes/1024:<20.2f} {'Docker,K8s,imagens':<20}")
+    lines.append(f"{'Engines de Inferência':<40} {engines_gb:<22.0f} {engines_gb*num_nodes/1024:<20.2f} {'TensorRT-LLM,vLLM,NIM':<20}")
+    lines.append(f"{'Dependências da Plataforma':<40} {deps_gb:<22.0f} {deps_gb*num_nodes/1024:<20.2f} {'Python,NCCL,ML libs':<20}")
+    lines.append(f"{'Configuração e Metadados':<40} {config_gb:<22.0f} {config_gb*num_nodes/1024:<20.2f} {'Helm,certs,secrets':<20}")
+    lines.append("-" * 102)
+    lines.append(f"{'TOTAL por servidor':<40} {rec.storage.platform_per_server_gb:<22.0f} {rec.storage.platform_volume_total_tb:<20.2f} {'':<20}")
+    lines.append("")
+    
+    lines.append(f"TOTAL PLATAFORMA (todos os {num_nodes} nós): {rec.storage.platform_volume_total_tb:.2f} TB")
+    lines.append("")
+    
+    lines.append("NOTA OPERACIONAL:")
+    lines.append(platform_rationale.get("operational_meaning", "Volume estrutural fixo da plataforma de IA."))
+    lines.append("")
+    
     # Seção 3: Resultados por Cenário
     lines.append("┌" + "─" * 98 + "┐")
     lines.append("│" + " SEÇÃO 3: RESULTADOS POR CENÁRIO".ljust(98) + "│")
@@ -174,6 +218,7 @@ def format_full_report(
             lines.append(f"    - Cache (base/recomendado): {s.storage.storage_cache_base_tb:.2f} / {s.storage.storage_cache_recommended_tb:.2f} TB")
             lines.append(f"    - Logs (base/recomendado): {s.storage.storage_logs_base_tb:.2f} / {s.storage.storage_logs_recommended_tb:.2f} TB")
             lines.append(f"    - Operacional (base/recomendado): {s.storage.storage_operational_base_tb:.2f} / {s.storage.storage_operational_recommended_tb:.2f} TB")
+            lines.append(f"    - Plataforma (base/recomendado): {s.storage.platform_volume_total_tb:.2f} / {s.storage.platform_volume_recommended_tb:.2f} TB ({s.storage.platform_per_server_tb:.2f} TB/servidor × {s.nodes_final} nós)")
             lines.append(f"  • IOPS (pico): {s.storage.iops_read_peak:,} R / {s.storage.iops_write_peak:,} W")
             lines.append(f"  • IOPS (steady): {s.storage.iops_read_steady:,} R / {s.storage.iops_write_steady:,} W")
             lines.append(f"  • Throughput (pico): {s.storage.throughput_read_peak_gbps:.2f} R / {s.storage.throughput_write_peak_gbps:.2f} W GB/s")
@@ -260,13 +305,18 @@ def format_json_report(
                 "storage_cache_base_tb": round(s.storage.storage_cache_base_tb, 3),
                 "storage_logs_base_tb": round(s.storage.storage_logs_base_tb, 3),
                 "storage_operational_base_tb": round(s.storage.storage_operational_base_tb, 3),
+                "platform_volume_total_tb": round(s.storage.platform_volume_total_tb, 3),
                 "storage_total_base_tb": round(s.storage.storage_total_base_tb, 3),
                 # Valores RECOMENDADOS (estratégicos com margem)
                 "storage_model_recommended_tb": round(s.storage.storage_model_recommended_tb, 3),
                 "storage_cache_recommended_tb": round(s.storage.storage_cache_recommended_tb, 3),
                 "storage_logs_recommended_tb": round(s.storage.storage_logs_recommended_tb, 3),
                 "storage_operational_recommended_tb": round(s.storage.storage_operational_recommended_tb, 3),
+                "platform_volume_recommended_tb": round(s.storage.platform_volume_recommended_tb, 3),
                 "storage_total_recommended_tb": round(s.storage.storage_total_recommended_tb, 3),
+                # Detalhamento da plataforma
+                "platform_per_server_gb": round(s.storage.platform_per_server_gb, 2),
+                "platform_per_server_tb": round(s.storage.platform_per_server_tb, 3),
                 # Margem aplicada
                 "margin_applied": s.storage.margin_applied,
                 "margin_percent": round(s.storage.margin_percent, 3),
@@ -322,6 +372,13 @@ def format_json_report(
             ],
             "source": scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("source", "parameters.json") if scenarios["recommended"].storage else "N/A",
             "notes": scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("notes", "") if scenarios["recommended"].storage else ""
+        },
+        "platform_storage": {
+            "per_server_gb": round(scenarios["recommended"].storage.platform_per_server_gb, 2) if scenarios["recommended"].storage else 0.0,
+            "per_server_tb": round(scenarios["recommended"].storage.platform_per_server_tb, 3) if scenarios["recommended"].storage else 0.0,
+            "total_tb_recommended": round(scenarios["recommended"].storage.platform_volume_total_tb, 3) if scenarios["recommended"].storage else 0.0,
+            "source": "platform_storage_profile.json",
+            "breakdown": scenarios["recommended"].storage.rationale.get("platform_storage", {}).get("inputs", {}) if scenarios["recommended"].storage else {}
         },
         "scenarios": {
             "minimum": scenario_to_dict(scenarios["minimum"]),

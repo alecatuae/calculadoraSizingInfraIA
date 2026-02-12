@@ -11,6 +11,7 @@ from typing import Dict, List
 from sizing.cli import parse_cli_args
 from sizing.config_loader import ConfigLoader
 from sizing.capacity_policy import load_capacity_policy
+from sizing.platform_storage import load_platform_storage_profile
 from sizing.calc_kv import calc_kv_cache
 from sizing.calc_vram import calc_vram
 from sizing.calc_scenarios import create_scenario_configs, calc_scenario, ScenarioResult
@@ -94,12 +95,18 @@ def main():
             override_margin=config.capacity_margin
         )
         
+        # Carregar profile de storage da plataforma
+        platform_storage_profile = load_platform_storage_profile(
+            filepath="platform_storage_profile.json"
+        )
+        
         if config.verbose:
             print(f"   ✓ Modelo: {model.name}")
             print(f"   ✓ Servidor: {server.name}")
             print(f"   ✓ Storage: {storage.name}")
             margin_source = "CLI override" if config.capacity_margin is not None else "parameters.json"
             print(f"   ✓ Margem de Capacidade: {capacity_policy.margin_percent*100:.0f}% ({margin_source})")
+            print(f"   ✓ Plataforma Storage: {platform_storage_profile.total_per_server_gb:.0f} GB/servidor ({platform_storage_profile.total_per_server_tb:.2f} TB)")
         
         # 4. Calcular KV cache
         if config.verbose:
@@ -237,6 +244,7 @@ def main():
                 weights_precision=weights_precision,
                 replicas_per_node=config.replicas_per_node,
                 capacity_policy=capacity_policy,
+                platform_storage_profile=platform_storage_profile,
                 scenario=key,
                 retention_days=30  # Será sobrescrito por cenário em calc_storage
             )

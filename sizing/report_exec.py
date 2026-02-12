@@ -66,7 +66,9 @@ def format_exec_summary(
     if scenarios["recommended"].storage and scenarios["recommended"].storage.margin_applied:
         margin_pct = scenarios["recommended"].storage.margin_percent * 100
         margin_source = scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("source", "parameters.json")
+        platform_per_server_tb = scenarios["recommended"].storage.platform_per_server_tb
         lines.append(f"ℹ️  Os valores de storage apresentados já consideram margem adicional de {margin_pct:.0f}% conforme política de capacidade definida em {margin_source}.")
+        lines.append(f"ℹ️  O Storage total inclui volume estrutural da plataforma ({platform_per_server_tb:.2f} TB/servidor): SO, NVIDIA AI Enterprise, runtime de containers e engines de inferência.")
         lines.append("")
     
     # Recomendação

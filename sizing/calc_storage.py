@@ -23,6 +23,7 @@ class StorageRequirements:
     storage_cache_base_tb: float
     storage_logs_base_tb: float
     storage_operational_base_tb: float
+    platform_volume_total_tb: float  # Volume da plataforma (SO, AI Enterprise, runtime)
     storage_total_base_tb: float
     
     # Volumetria RECOMENDADA (TB) - valores estratégicos com margem
@@ -30,7 +31,12 @@ class StorageRequirements:
     storage_cache_recommended_tb: float
     storage_logs_recommended_tb: float
     storage_operational_recommended_tb: float
+    platform_volume_recommended_tb: float  # Volume da plataforma com margem
     storage_total_recommended_tb: float
+    
+    # Detalhamento da plataforma (valores por servidor, sem margem)
+    platform_per_server_gb: float
+    platform_per_server_tb: float
     
     # Margem aplicada
     margin_applied: bool
@@ -418,6 +424,7 @@ def calc_storage_requirements(
     weights_precision: str,
     replicas_per_node: int,
     capacity_policy,  # CapacityPolicy instance
+    platform_storage_profile,  # PlatformStorageProfile instance
     scenario: str = "recomendado",
     retention_days: int = 30
 ) -> StorageRequirements:
@@ -434,6 +441,7 @@ def calc_storage_requirements(
         weights_precision: Precisão dos pesos
         replicas_per_node: Réplicas por nó
         capacity_policy: Política de margem de capacidade
+        platform_storage_profile: Profile de storage da plataforma (SO, AI Enterprise, runtime)
         scenario: "minimo", "recomendado" ou "ideal"
         retention_days: Dias de retenção de logs (sobrescrito por cenário)
     
@@ -457,11 +465,17 @@ def calc_storage_requirements(
         num_nodes, scenario
     )
     
+    # Calcular volume da plataforma (SO, AI Enterprise, runtime, etc.)
+    platform_volume_total_tb = platform_storage_profile.calc_total_platform_volume_tb(num_nodes)
+    platform_rationale = platform_storage_profile.get_rationale(num_nodes)
+    
+    # Storage Total BASE inclui plataforma + modelo + cache + logs + operational
     storage_total_base_tb = (
         storage_model_base_tb + 
         storage_cache_base_tb + 
         storage_logs_base_tb + 
-        storage_operational_base_tb
+        storage_operational_base_tb +
+        platform_volume_total_tb
     )
     
     # Aplicar margem de capacidade (valores estratégicos)
@@ -476,6 +490,10 @@ def calc_storage_requirements(
     )
     storage_operational_recommended_tb = capacity_policy.apply_margin(
         storage_operational_base_tb, "storage_operational"
+    )
+    # Volume da plataforma também recebe margem
+    platform_volume_recommended_tb = capacity_policy.apply_margin(
+        platform_volume_total_tb, "storage_total"  # Usa o mesmo target para aplicar margem
     )
     storage_total_recommended_tb = capacity_policy.apply_margin(
         storage_total_base_tb, "storage_total"
@@ -497,17 +515,22 @@ def calc_storage_requirements(
         "storage_cache": rationale_cache,
         "storage_logs": rationale_logs,
         "storage_operational": rationale_operational,
+        "platform_storage": platform_rationale,
         "storage_total": {
-            "formula": "storage_total_tb = storage_model + storage_cache + storage_logs + storage_operational",
+            "formula": "storage_total_tb = storage_model + storage_cache + storage_logs + storage_operational + platform_volume",
             "inputs": {
                 "storage_model_base_tb": round(storage_model_base_tb, 3),
                 "storage_cache_base_tb": round(storage_cache_base_tb, 3),
                 "storage_logs_base_tb": round(storage_logs_base_tb, 3),
                 "storage_operational_base_tb": round(storage_operational_base_tb, 3),
+                "platform_volume_total_tb": round(platform_volume_total_tb, 3),
                 "storage_total_base_tb": round(storage_total_base_tb, 3)
             },
-            "assumption": f"Cenário {scenario}: soma de todos os componentes de storage. Margem de {capacity_policy.margin_percent*100:.0f}% aplicada conforme política de capacidade.",
-            "operational_meaning": f"Total BASE de {storage_total_base_tb:.2f} TB. Total RECOMENDADO de {storage_total_recommended_tb:.2f} TB com margem de {capacity_policy.margin_percent*100:.0f}% para crescimento, retenção adicional e resiliência. Subdimensionamento compromete tempo de recuperação."
+            "assumption": f"Cenário {scenario}: soma de todos os componentes de storage incluindo volume estrutural da plataforma. "
+                         f"Margem de {capacity_policy.margin_percent*100:.0f}% aplicada conforme política de capacidade.",
+            "operational_meaning": f"Total BASE de {storage_total_base_tb:.2f} TB (inclui {platform_volume_total_tb:.2f} TB de plataforma). "
+                                  f"Total RECOMENDADO de {storage_total_recommended_tb:.2f} TB com margem de {capacity_policy.margin_percent*100:.0f}% para crescimento, retenção adicional e resiliência. "
+                                  f"Subdimensionamento compromete tempo de recuperação."
         },
         "capacity_policy": {
             "margin_percent": capacity_policy.margin_percent,
@@ -524,13 +547,18 @@ def calc_storage_requirements(
         storage_cache_base_tb=storage_cache_base_tb,
         storage_logs_base_tb=storage_logs_base_tb,
         storage_operational_base_tb=storage_operational_base_tb,
+        platform_volume_total_tb=platform_volume_total_tb,
         storage_total_base_tb=storage_total_base_tb,
         # Valores RECOMENDADOS (com margem)
         storage_model_recommended_tb=storage_model_recommended_tb,
         storage_cache_recommended_tb=storage_cache_recommended_tb,
         storage_logs_recommended_tb=storage_logs_recommended_tb,
         storage_operational_recommended_tb=storage_operational_recommended_tb,
+        platform_volume_recommended_tb=platform_volume_recommended_tb,
         storage_total_recommended_tb=storage_total_recommended_tb,
+        # Detalhamento da plataforma
+        platform_per_server_gb=platform_storage_profile.total_per_server_gb,
+        platform_per_server_tb=platform_storage_profile.total_per_server_tb,
         # Margem aplicada
         margin_applied=True,
         margin_percent=capacity_policy.margin_percent,
