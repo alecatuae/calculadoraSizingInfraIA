@@ -1,0 +1,9 @@
+{
+  "os_installation_gb": 120,
+  "nvidia_ai_enterprise_gb": 250,
+  "container_runtime_gb": 80,
+  "model_runtime_engines_gb": 150,
+  "platform_dependencies_gb": 50,
+  "config_and_metadata_gb": 25,
+  "notes": "Volumes médios para instalação completa da plataforma NVIDIA AI Enterprise com runtime de inferência. OS inclui Ubuntu/RHEL + drivers NVIDIA. AI Enterprise inclui CUDA, cuDNN, TensorRT, Triton Inference Server. Runtime inclui Docker/containerd, Kubernetes, imagens base. Engines incluem TensorRT-LLM, vLLM, NIM. Dependências incluem bibliotecas Python, NCCL, bibliotecas de ML. Config inclui Helm charts, manifests, certificados, secrets."
+}
