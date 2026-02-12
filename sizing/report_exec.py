@@ -313,7 +313,7 @@ def format_executive_markdown(
     lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("*Relatório gerado automaticamente pelo sistema de sizing de infraestrutura LLM*")
+    lines.append("*Relatório gerado automaticamente pelo Calculadora de Sizing de Infraestrutura para Inferência, desenvolvido pelo time de InfraCore de CLOUD.*")
     lines.append("")
     
     return "\n".join(lines)
