@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Dict, List, Any, Tuple
 
 from .models import ModelSpec
-from .servers import ServerSpec
+from .servers import (
+    ServerSpec, GPUSpec, PowerSpec, ThermalSpec, CPUSpec, SystemMemorySpec,
+    CoolingSpec, StorageSpec, NetworkingSpec, SoftwareSpec, PhysicalSpec,
+    PowerSupplySpec, MaxCurrentSpec, DimensionsSpec
+)
 from .storage import StorageProfile
 from .validator import validate_models, validate_servers, validate_storage_profiles
 
@@ -114,23 +118,154 @@ class ConfigLoader:
                 error_msg = "\n".join(errors)
                 raise ValueError(f"❌ Erros de validação em servers.json:\n{error_msg}")
         
-        # Parsear servidores
+        # Parsear servidores (estrutura nested)
         servers = {}
         for s in self._servers_data:
-            server = ServerSpec(
-                name=s["name"],
-                gpus=s["gpus"],
-                hbm_per_gpu_gb=s["hbm_per_gpu_gb"],
-                rack_units_u=s.get("rack_units_u", 10),
-                power_kw_max=s["power_kw_max"],
-                heat_output_btu_hr_max=s.get("heat_output_btu_hr_max"),
-                notes=s.get("notes", "")
-            )
+            server = self._parse_server(s)
             server.validate()
             servers[server.name.lower()] = server
         
         self._servers = servers
         return servers
+    
+    def _parse_server(self, s: Dict[str, Any]) -> ServerSpec:
+        """Parse servidor com estrutura hierárquica."""
+        
+        # Parse CPU (opcional)
+        cpu = None
+        if "cpu" in s and s["cpu"]:
+            cpu = CPUSpec(
+                model=s["cpu"].get("model"),
+                cores_total=s["cpu"].get("cores_total"),
+                threads_total=s["cpu"].get("threads_total"),
+                base_frequency_ghz=s["cpu"].get("base_frequency_ghz"),
+                max_boost_frequency_ghz=s["cpu"].get("max_boost_frequency_ghz")
+            )
+        
+        # Parse System Memory (opcional)
+        system_memory = None
+        if "system_memory" in s and s["system_memory"]:
+            system_memory = SystemMemorySpec(
+                capacity_total_tb=s["system_memory"].get("capacity_total_tb"),
+                type=s["system_memory"].get("type"),
+                speed_mhz=s["system_memory"].get("speed_mhz")
+            )
+        
+        # Parse GPU (obrigatório)
+        gpu = None
+        if "gpu" in s and s["gpu"]:
+            gpu = GPUSpec(
+                count=s["gpu"]["count"],
+                model=s["gpu"]["model"],
+                hbm_per_gpu_gb=s["gpu"]["hbm_per_gpu_gb"],
+                total_hbm_gb=s["gpu"].get("total_hbm_gb"),
+                nvlink_bandwidth_tbps_total=s["gpu"].get("nvlink_bandwidth_tbps_total"),
+                nvlink_generation=s["gpu"].get("nvlink_generation")
+            )
+        
+        # Parse Power (obrigatório)
+        power = None
+        if "power" in s and s["power"]:
+            power_supplies = None
+            if "power_supplies" in s["power"] and s["power"]["power_supplies"]:
+                power_supplies = PowerSupplySpec(
+                    count=s["power"]["power_supplies"].get("count"),
+                    rating_each_watts=s["power"]["power_supplies"].get("rating_each_watts"),
+                    redundancy=s["power"]["power_supplies"].get("redundancy")
+                )
+            
+            max_current = None
+            if "max_current" in s["power"] and s["power"]["max_current"]:
+                max_current = MaxCurrentSpec(
+                    _208v_3phase_amps=s["power"]["max_current"].get("208v_3phase_amps"),
+                    _480v_3phase_amps=s["power"]["max_current"].get("480v_3phase_amps")
+                )
+            
+            power = PowerSpec(
+                power_kw_max=s["power"]["power_kw_max"],
+                power_supplies=power_supplies,
+                input_voltage=s["power"].get("input_voltage"),
+                max_current=max_current
+            )
+        
+        # Parse Thermal (opcional)
+        thermal = None
+        if "thermal" in s and s["thermal"]:
+            thermal = ThermalSpec(
+                heat_output_btu_hr_max=s["thermal"].get("heat_output_btu_hr_max"),
+                ambient_temp_operating_c_min=s["thermal"].get("ambient_temp_operating_c_min"),
+                ambient_temp_operating_c_max=s["thermal"].get("ambient_temp_operating_c_max")
+            )
+        
+        # Parse Cooling (opcional)
+        cooling = None
+        if "cooling" in s and s["cooling"]:
+            cooling = CoolingSpec(
+                airflow_cfm=s["cooling"].get("airflow_cfm"),
+                cooling_type=s["cooling"].get("cooling_type")
+            )
+        
+        # Parse Storage (opcional)
+        storage_spec = None
+        if "storage" in s and s["storage"]:
+            storage_spec = StorageSpec(
+                boot_drives=s["storage"].get("boot_drives"),
+                internal_nvme_slots=s["storage"].get("internal_nvme_slots"),
+                max_internal_storage_tb=s["storage"].get("max_internal_storage_tb")
+            )
+        
+        # Parse Networking (opcional)
+        networking = None
+        if "networking" in s and s["networking"]:
+            networking = NetworkingSpec(
+                infiniband=s["networking"].get("infiniband"),
+                management=s["networking"].get("management")
+            )
+        
+        # Parse Software (opcional)
+        software = None
+        if "software" in s and s["software"]:
+            software = SoftwareSpec(
+                os_supported=s["software"].get("os_supported"),
+                nvidia_ai_enterprise=s["software"].get("nvidia_ai_enterprise"),
+                cuda_version=s["software"].get("cuda_version")
+            )
+        
+        # Parse Physical (opcional)
+        physical = None
+        if "physical" in s and s["physical"]:
+            dimensions = None
+            if "dimensions_mm" in s["physical"] and s["physical"]["dimensions_mm"]:
+                dimensions = DimensionsSpec(
+                    width=s["physical"]["dimensions_mm"].get("width"),
+                    depth=s["physical"]["dimensions_mm"].get("depth"),
+                    height=s["physical"]["dimensions_mm"].get("height")
+                )
+            
+            physical = PhysicalSpec(
+                dimensions_mm=dimensions,
+                weight_kg_max=s["physical"].get("weight_kg_max")
+            )
+        
+        # Criar ServerSpec
+        return ServerSpec(
+            name=s["name"],
+            manufacturer=s.get("manufacturer"),
+            form_factor=s.get("form_factor"),
+            rack_units_u=s.get("rack_units_u", 10),
+            cpu=cpu,
+            system_memory=system_memory,
+            gpu=gpu,
+            power=power,
+            thermal=thermal,
+            cooling=cooling,
+            storage=storage_spec,
+            networking=networking,
+            software=software,
+            physical=physical,
+            notes=s.get("notes", ""),
+            source=s.get("source")
+        )
     
     def load_storage(self, filepath: str = "storage.json") -> Dict[str, StorageProfile]:
         """Carrega perfis de storage do JSON."""

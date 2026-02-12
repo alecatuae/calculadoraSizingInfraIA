@@ -79,32 +79,80 @@ MODEL_SCHEMA = {
 }
 
 # ============================================================================
-# SERVER SCHEMA
+# SERVER SCHEMA (Nested/Hierarchical)
 # ============================================================================
 
 SERVER_SCHEMA = {
     "required": {
         "name": str,
-        "gpus": int,
-        "hbm_per_gpu_gb": (int, float),
         "rack_units_u": int,
-        "power_kw_max": (int, float),
+        "gpu": dict,  # Nested object (obrigatório)
+        "power": dict,  # Nested object (obrigatório)
     },
     "optional": {
-        "heat_output_btu_hr_max": ((int, float), type(None)),
+        "manufacturer": str,
+        "form_factor": str,
+        "cpu": dict,
+        "system_memory": dict,
+        "thermal": dict,
+        "cooling": dict,
+        "storage": dict,
+        "networking": dict,
+        "software": dict,
+        "physical": dict,
         "notes": str,
+        "source": list,
     },
     "enums": {},
     "constraints": [
         {
-            "name": "positive_values",
-            "check": lambda s: all([
-                s.get("gpus", 1) > 0,
-                s.get("hbm_per_gpu_gb", 1) > 0,
-                s.get("rack_units_u", 1) > 0,
-                s.get("power_kw_max", 1) > 0,
-            ]),
-            "error": "Server specs (gpus, hbm_per_gpu_gb, rack_units_u, power_kw_max) must be > 0"
+            "name": "rack_units_positive",
+            "check": lambda s: s.get("rack_units_u", 1) > 0,
+            "error": "rack_units_u must be > 0"
+        },
+        {
+            "name": "gpu_section_required",
+            "check": lambda s: "gpu" in s and isinstance(s["gpu"], dict),
+            "error": "Server must have 'gpu' section (nested object)"
+        },
+        {
+            "name": "gpu_count_required",
+            "check": lambda s: (
+                "gpu" not in s or
+                (isinstance(s["gpu"], dict) and "count" in s["gpu"] and s["gpu"]["count"] > 0)
+            ),
+            "error": "gpu.count is required and must be > 0"
+        },
+        {
+            "name": "gpu_hbm_required",
+            "check": lambda s: (
+                "gpu" not in s or
+                (isinstance(s["gpu"], dict) and "hbm_per_gpu_gb" in s["gpu"] and s["gpu"]["hbm_per_gpu_gb"] > 0)
+            ),
+            "error": "gpu.hbm_per_gpu_gb is required and must be > 0"
+        },
+        {
+            "name": "power_section_required",
+            "check": lambda s: "power" in s and isinstance(s["power"], dict),
+            "error": "Server must have 'power' section (nested object)"
+        },
+        {
+            "name": "power_kw_max_required",
+            "check": lambda s: (
+                "power" not in s or
+                (isinstance(s["power"], dict) and "power_kw_max" in s["power"] and s["power"]["power_kw_max"] > 0)
+            ),
+            "error": "power.power_kw_max is required and must be > 0"
+        },
+        {
+            "name": "gpu_total_hbm_consistent",
+            "check": lambda s: (
+                "gpu" not in s or
+                "total_hbm_gb" not in s["gpu"] or
+                s["gpu"]["total_hbm_gb"] is None or
+                abs(s["gpu"]["total_hbm_gb"] - s["gpu"].get("count", 1) * s["gpu"].get("hbm_per_gpu_gb", 1)) / (s["gpu"].get("count", 1) * s["gpu"].get("hbm_per_gpu_gb", 1)) < 0.01
+            ),
+            "error": "gpu.total_hbm_gb must match gpu.count * gpu.hbm_per_gpu_gb (tolerance: 1%)"
         },
     ]
 }

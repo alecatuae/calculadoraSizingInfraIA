@@ -48,11 +48,11 @@ def format_full_report(
     lines.append("")
     
     lines.append(f"Servidor: {server.name}")
-    lines.append(f"  • GPUs: {server.gpus}")
-    lines.append(f"  • HBM per GPU: {server.hbm_per_gpu_gb} GB")
+    lines.append(f"  • GPUs: {server.gpu.count}")
+    lines.append(f"  • HBM per GPU: {server.gpu.hbm_per_gpu_gb} GB")
     lines.append(f"  • HBM Total: {server.total_hbm_gib:.1f} GiB")
-    if server.power_kw_max:
-        lines.append(f"  • Potência máxima: {server.power_kw_max} kW")
+    if server.power and server.power.power_kw_max:
+        lines.append(f"  • Potência máxima: {server.power.power_kw_max} kW")
     if server.rack_units_u:
         lines.append(f"  • Rack: {server.rack_units_u}U")
     lines.append("")

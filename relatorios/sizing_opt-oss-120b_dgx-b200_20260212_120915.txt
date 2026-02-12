@@ -1,0 +1,159 @@
+====================================================================================================
+RELATÓRIO COMPLETO DE SIZING - INFERÊNCIA DE LLM
+====================================================================================================
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 1: ENTRADAS                                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Modelo: opt-oss-120b
+  • Camadas: 36
+  • KV Heads: 8
+  • Head Dim: 64
+  • Max Context: 131,072
+  • Attention Pattern: hybrid
+
+Servidor: dgx-b200
+  • GPUs: 8
+  • HBM per GPU: 180 GB
+  • HBM Total: 1341.1 GiB
+  • Potência máxima: 14.3 kW
+  • Rack: 10U
+
+Concorrência Alvo: 500 sessões
+Contexto Efetivo: 65,536 tokens
+Precisão KV: fp8
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2: CONSUMO REAL DE VRAM                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+CONSUMO UNITÁRIO:
+  • Pesos do modelo: 120.00 GiB
+  • KV cache por sessão: 1.13 GiB
+  • Overhead runtime: 120.0 GiB
+
+BUDGET E CAPACIDADE POR NÓ:
+  • HBM total: 1341.1 GiB
+  • Budget para sessões: 770.8 GiB
+  • Sessões suportadas: 683
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2.5: PERFIL DE STORAGE                                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Storage: profile_default
+  • Tipo: nvme_local
+  • Capacidade total: 61.44 TB
+  • Capacidade utilizável: 56.00 TB
+  • IOPS leitura (max): 1,000,000
+  • IOPS escrita (max): 800,000
+  • Throughput leitura: 3500.0 MB/s (28.00 GB/s)
+  • Throughput escrita: 3125.0 MB/s (25.00 GB/s)
+  • Latência leitura (p50/p99): 0.08 / 0.15 ms
+  • Latência escrita (p50/p99): 0.10 / 0.20 ms
+  • Consumo físico: 2U rack, 0.5 kW
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 3: RESULTADOS POR CENÁRIO                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+====================================================================================================
+CENÁRIO: MÍNIMO
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 1
+  • Sessões por nó (capacidade): 683
+  • Sessões por nó (operando): 500
+  • VRAM por nó (efetiva): 803.6 GiB (59.9% HBM)
+
+STORAGE:
+  • Volumetria total: 7.42 TB
+    - Modelo: 0.29 TB
+    - Cache: 1.07 TB
+    - Logs: 6.03 TB
+    - Operacional: 0.01 TB
+  • IOPS (pico): 75,000 R / 1,500 W
+  • IOPS (steady): 1,000 R / 500 W
+  • Throughput (pico): 7.50 R / 0.01 W GB/s
+  • Throughput (steady): 0.50 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 14.3 kW
+  • Energia (Storage): 0.5 kW
+  • Energia (Total): 14.8 kW
+  • Rack (Compute): 10U
+  • Rack (Storage): 2U
+  • Rack (Total): 12U
+  • HA: none
+
+====================================================================================================
+CENÁRIO: RECOMENDADO
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 3
+  • Sessões por nó (capacidade): 683
+  • Sessões por nó (operando): 167
+  • VRAM por nó (efetiva): 428.2 GiB (31.9% HBM)
+
+STORAGE:
+  • Volumetria total: 10.18 TB
+    - Modelo: 0.88 TB
+    - Cache: 3.22 TB
+    - Logs: 6.03 TB
+    - Operacional: 0.04 TB
+  • IOPS (pico): 75,000 R / 1,500 W
+  • IOPS (steady): 3,000 R / 500 W
+  • Throughput (pico): 7.50 R / 0.01 W GB/s
+  • Throughput (steady): 1.50 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 42.9 kW
+  • Energia (Storage): 0.5 kW
+  • Energia (Total): 43.4 kW
+  • Rack (Compute): 30U
+  • Rack (Storage): 2U
+  • Rack (Total): 32U
+  • HA: n+1
+
+====================================================================================================
+CENÁRIO: IDEAL
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 4
+  • Sessões por nó (capacidade): 634
+  • Sessões por nó (operando): 125
+  • VRAM por nó (efetiva): 380.9 GiB (28.4% HBM)
+
+STORAGE:
+  • Volumetria total: 24.70 TB
+    - Modelo: 1.17 TB
+    - Cache: 5.34 TB
+    - Logs: 18.10 TB
+    - Operacional: 0.08 TB
+  • IOPS (pico): 100,000 R / 2,000 W
+  • IOPS (steady): 4,000 R / 500 W
+  • Throughput (pico): 10.00 R / 0.01 W GB/s
+  • Throughput (steady): 2.00 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 57.2 kW
+  • Energia (Storage): 0.5 kW
+  • Energia (Total): 57.7 kW
+  • Rack (Compute): 40U
+  • Rack (Storage): 2U
+  • Rack (Total): 42U
+  • HA: n+2
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 4: ALERTAS E AVISOS                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ℹ️  --tensor-parallel não especificado. Assumindo TP = GPUs do servidor (8).
+
+====================================================================================================
+FIM DO RELATÓRIO
+====================================================================================================

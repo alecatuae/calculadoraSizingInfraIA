@@ -301,20 +301,113 @@ calculadoraSizingInfraIA/
 
 ---
 
-### Schema Completo: `servers.json`
+### Schema Completo: `servers.json` (Estrutura Hierárquica)
 
-| Campo | Tipo | Obrigatório? | Descrição | Unidade/Enum | Exemplo |
-|-------|------|--------------|-----------|--------------|---------|
-| `name` | str | ✅ Sim | Nome único do servidor | - | `"dgx-b300"` |
-| `gpus` | int | ✅ Sim | Número de GPUs por nó | count | `8` |
-| `hbm_per_gpu_gb` | float | ✅ Sim | Memória HBM por GPU | GB (decimal) | `192.0` |
-| `rack_units_u` | int | ✅ Sim | Espaço ocupado em rack | U | `10` |
-| `power_kw_max` | float | ✅ Sim | Consumo elétrico máximo | kW | `14.5` |
-| `heat_output_btu_hr_max` | float\|null | ❌ Não | Dissipação térmica máxima | BTU/hr | `49500.0` |
-| `notes` | str | ❌ Não | Notas e observações | - | `"NVIDIA DGX B300..."` |
+**✨ NOVO (v2.0):** `servers.json` usa estrutura **hierárquica (nested)** para organizar componentes logicamente.
+
+**Documentação completa:** [`servers.schema.md`](servers.schema.md)
+
+#### Estrutura Nested
+
+```json
+{
+  "servers": [
+    {
+      "name": "dgx-b300",
+      "manufacturer": "NVIDIA",
+      "form_factor": "Rackmount",
+      "rack_units_u": 10,
+      
+      "cpu": { ... },
+      "system_memory": { ... },
+      "gpu": { ... },        // Obrigatório
+      "power": { ... },      // Obrigatório
+      "thermal": { ... },
+      "cooling": { ... },
+      "storage": { ... },
+      "networking": { ... },
+      "software": { ... },
+      "physical": { ... },
+      
+      "notes": "...",
+      "source": [ ... ]
+    }
+  ]
+}
+```
+
+#### Campos Obrigatórios (Mínimo)
+
+| Campo | Tipo | Descrição | Usado no Cálculo? |
+|-------|------|-----------|-------------------|
+| `name` | string | Nome único do servidor | ✅ Identificação |
+| `rack_units_u` | integer | Espaço em rack (U) | ✅ **Rack total** |
+| `gpu.count` | integer | Número de GPUs por nó | ✅ **HBM total e paralelismo** |
+| `gpu.model` | string | Modelo da GPU | ✅ Identificação |
+| `gpu.hbm_per_gpu_gb` | float | HBM por GPU (GB) | ✅ **Capacidade crítica** |
+| `power.power_kw_max` | float | Consumo máximo (kW) | ✅ **Energia total** |
+
+#### Campos Opcionais Importantes
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `gpu.total_hbm_gb` | float | HBM total (validado automaticamente) |
+| `thermal.heat_output_btu_hr_max` | float | Dissipação térmica (BTU/hr) |
+| `source` | array[string] | Links de documentação oficial |
 
 **Constraints:**
-- Todos os valores numéricos devem ser > 0
+- `rack_units_u > 0`
+- `gpu.count > 0`
+- `gpu.hbm_per_gpu_gb > 0`
+- `power.power_kw_max > 0`
+- Se `gpu.total_hbm_gb` presente: validação automática de consistência (tolerância 1%)
+
+#### Exemplo de Adição de Servidor
+
+**Passo 1:** Edite `servers.json` e adicione:
+
+```json
+{
+  "name": "dgx-h200",
+  "rack_units_u": 10,
+  "gpu": {
+    "count": 8,
+    "model": "NVIDIA H200",
+    "hbm_per_gpu_gb": 141.0,
+    "total_hbm_gb": 1128.0
+  },
+  "power": {
+    "power_kw_max": 10.2
+  },
+  "thermal": {
+    "heat_output_btu_hr_max": 34800.0
+  },
+  "notes": "DGX H200 com 8x H200 (141GB HBM3 cada)",
+  "source": [
+    "https://docs.nvidia.com/dgx/dgxh200-user-guide/"
+  ]
+}
+```
+
+**Passo 2:** Validar:
+```bash
+python3 main.py --validate-only
+```
+
+**Passo 3:** Testar:
+```bash
+python3 main.py --model opt-oss-120b --server dgx-h200 --storage profile_default --concurrency 1000 --effective-context 131072
+```
+
+**Checklist:**
+- [ ] Nome único
+- [ ] Seções `gpu` e `power` preenchidas
+- [ ] Campos obrigatórios: `gpu.count`, `gpu.hbm_per_gpu_gb`, `power.power_kw_max`
+- [ ] Valores > 0
+- [ ] Se `gpu.total_hbm_gb`: consistência validada
+- [ ] `python3 main.py --validate-only` → ✅ OK
+
+**Documentação detalhada:** Consulte [`servers.schema.md`](servers.schema.md) para schema completo com todos os campos, seções opcionais e exemplos
 
 ---
 

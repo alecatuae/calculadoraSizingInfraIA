@@ -2,31 +2,169 @@
   "servers": [
     {
       "name": "dgx-b300",
-      "gpus": 8,
-      "hbm_per_gpu_gb": 288,
-      "total_hbm_gb": 2304,
-      "nvlink_bandwidth_tbps": 14.4,
-      "system_memory_tb": 2,
+      "manufacturer": "NVIDIA",
+      "form_factor": "Rackmount",
       "rack_units_u": 10,
-      "power_kw_max": 14.5,
-      "heat_output_btu_hr_max": 49476.054,
-      "airflow_cfm": null,
-      "notes": "DGX B300: 8x GPUs Blackwell Ultra, 8x288GB HBM (=2.3TB), NVLink 14.4TB/s. Rack: 10U, Power: 14.5 kW, Heat: 49,476.054 BTUs/hr (max). Dados de Physical and Operational Specifications.",
+      
+      "cpu": {
+        "model": "Dual AMD EPYC 9754",
+        "cores_total": 256,
+        "threads_total": 512,
+        "base_frequency_ghz": 2.25,
+        "max_boost_frequency_ghz": 3.1
+      },
+      
+      "system_memory": {
+        "capacity_total_tb": 2.0,
+        "type": "DDR5",
+        "speed_mhz": 4800
+      },
+      
+      "gpu": {
+        "count": 8,
+        "model": "NVIDIA B300 Blackwell Ultra",
+        "hbm_per_gpu_gb": 288,
+        "total_hbm_gb": 2304,
+        "nvlink_bandwidth_tbps_total": 14.4,
+        "nvlink_generation": "5th Generation NVSwitch"
+      },
+      
+      "power": {
+        "power_kw_max": 14.5,
+        "power_supplies": {
+          "count": 6,
+          "rating_each_watts": 3000,
+          "redundancy": "N+1"
+        },
+        "input_voltage": ["200-240VAC", "380-480VAC"],
+        "max_current": {
+          "208v_3phase_amps": 52,
+          "480v_3phase_amps": 23
+        }
+      },
+      
+      "thermal": {
+        "heat_output_btu_hr_max": 49476.054,
+        "ambient_temp_operating_c_min": 5,
+        "ambient_temp_operating_c_max": 30
+      },
+      
+      "cooling": {
+        "airflow_cfm": null,
+        "cooling_type": "Air-cooled with front-to-back airflow"
+      },
+      
+      "storage": {
+        "boot_drives": "2x 960GB M.2 NVMe (RAID 1)",
+        "internal_nvme_slots": 8,
+        "max_internal_storage_tb": 61.44
+      },
+      
+      "networking": {
+        "infiniband": "8x 400Gb/s NDR InfiniBand/Ethernet",
+        "management": "1x 1GbE RJ45 (BMC)"
+      },
+      
+      "software": {
+        "os_supported": ["Ubuntu 20.04/22.04 LTS", "RHEL 8.x/9.x"],
+        "nvidia_ai_enterprise": "Included",
+        "cuda_version": "12.x"
+      },
+      
+      "physical": {
+        "dimensions_mm": {
+          "width": 482,
+          "depth": 1067,
+          "height": 444
+        },
+        "weight_kg_max": 130
+      },
+      
+      "notes": "DGX B300: 8x GPUs Blackwell Ultra, 8x288GB HBM (=2.3TB total), NVLink 14.4TB/s. Rack: 10U, Power: 14.5 kW, Heat: 49,476.054 BTUs/hr (max). Dados de Physical and Operational Specifications.",
       "source": [
         "https://docs.nvidia.com/dgx/dgxb300-user-guide/introduction-to-dgxb300.html"
       ]
     },
     {
       "name": "dgx-b200",
-      "gpus": 8,
-      "hbm_per_gpu_gb": 180,
-      "total_hbm_gb": 1440,
-      "nvlink_bandwidth_tbps": null,
-      "system_memory_tb": 2,
+      "manufacturer": "NVIDIA",
+      "form_factor": "Rackmount",
       "rack_units_u": 10,
-      "power_kw_max": 14.3,
-      "heat_output_btu_hr_max": null,
-      "airflow_cfm": null,
+      
+      "cpu": {
+        "model": "Dual AMD EPYC 9754",
+        "cores_total": 256,
+        "threads_total": 512,
+        "base_frequency_ghz": 2.25,
+        "max_boost_frequency_ghz": 3.1
+      },
+      
+      "system_memory": {
+        "capacity_total_tb": 2.0,
+        "type": "DDR5",
+        "speed_mhz": 4800
+      },
+      
+      "gpu": {
+        "count": 8,
+        "model": "NVIDIA B200",
+        "hbm_per_gpu_gb": 180,
+        "total_hbm_gb": 1440,
+        "nvlink_bandwidth_tbps_total": null,
+        "nvlink_generation": "5th Generation NVSwitch"
+      },
+      
+      "power": {
+        "power_kw_max": 14.3,
+        "power_supplies": {
+          "count": 6,
+          "rating_each_watts": 3000,
+          "redundancy": "N+1"
+        },
+        "input_voltage": ["200-240VAC", "380-480VAC"],
+        "max_current": {
+          "208v_3phase_amps": 51,
+          "480v_3phase_amps": 23
+        }
+      },
+      
+      "thermal": {
+        "heat_output_btu_hr_max": null,
+        "ambient_temp_operating_c_min": 5,
+        "ambient_temp_operating_c_max": 30
+      },
+      
+      "cooling": {
+        "airflow_cfm": null,
+        "cooling_type": "Air-cooled with front-to-back airflow"
+      },
+      
+      "storage": {
+        "boot_drives": "2x 960GB M.2 NVMe (RAID 1)",
+        "internal_nvme_slots": 8,
+        "max_internal_storage_tb": 61.44
+      },
+      
+      "networking": {
+        "infiniband": "8x 400Gb/s NDR InfiniBand/Ethernet",
+        "management": "1x 1GbE RJ45 (BMC)"
+      },
+      
+      "software": {
+        "os_supported": ["Ubuntu 20.04/22.04 LTS", "RHEL 8.x/9.x"],
+        "nvidia_ai_enterprise": "Included",
+        "cuda_version": "12.x"
+      },
+      
+      "physical": {
+        "dimensions_mm": {
+          "width": 482,
+          "depth": 1067,
+          "height": 444
+        },
+        "weight_kg_max": 130
+      },
+      
       "notes": "DGX B200: 8x B200 GPUs, 180GB HBM por GPU. Form Factor: 10U Rackmount, Power: 14.3 kW max. Dados de Mechanical e Power Specifications.",
       "source": [
         "https://docs.nvidia.com/dgx/dgxb200-user-guide/introduction-to-dgxb200.html"

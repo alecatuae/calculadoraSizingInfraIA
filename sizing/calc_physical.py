@@ -29,8 +29,8 @@ def calc_physical_consumption(
     nodes_final = scenario.nodes_final
     
     # Energia total (kW)
-    if server.power_kw_max is not None:
-        scenario.total_power_kw = nodes_final * server.power_kw_max
+    if server.power and server.power.power_kw_max is not None:
+        scenario.total_power_kw = nodes_final * server.power.power_kw_max
     else:
         scenario.total_power_kw = 0.0
     
