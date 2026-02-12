@@ -1,4 +1,4 @@
-# Calculadora de Sizing de Inferência LLM
+# Calculadora de Sizing de Infraestrutura para Inferência
 
 Sistema profissional de dimensionamento de infraestrutura para inferência de Large Language Models (LLMs) em GPUs NVIDIA DGX-class, com foco em capacity planning, resiliência operacional e otimização de custo.
 
@@ -802,7 +802,7 @@ Saída resumida para validação rápida e decisão inicial:
 
 ```
 ================================================================================
-RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM
+RESUMO EXECUTIVO - SIZING DE INFRAESTRUTURA PARA INFERÊNCIA
 ================================================================================
 
 Modelo:              opt-oss-120b

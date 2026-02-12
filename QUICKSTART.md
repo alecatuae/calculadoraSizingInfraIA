@@ -1,4 +1,4 @@
-# Quick Start - Sizing de Inferência LLM
+# Quick Start - Sizing de Infraestrutura para Inferência
 
 Guia rápido para executar o dimensionamento de infraestrutura para inferência de LLMs.
 
@@ -42,7 +42,7 @@ python3 main.py \
 
 ```
 ================================================================================
-RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM
+RESUMO EXECUTIVO - SIZING DE INFRAESTRUTURA PARA INFERÊNCIA
 ================================================================================
 
 Modelo:              opt-oss-120b

@@ -28,7 +28,7 @@ def format_exec_summary(
     
     # Cabeçalho
     lines.append("=" * 80)
-    lines.append("RESUMO EXECUTIVO - SIZING DE INFERÊNCIA LLM")
+    lines.append("RESUMO EXECUTIVO - SIZING DE INFRAESTRUTURA PARA INFERÊNCIA")
     lines.append("=" * 80)
     lines.append("")
     
@@ -108,7 +108,7 @@ def format_executive_markdown(
     lines = []
     
     # Título
-    lines.append("# Relatório Executivo - Sizing de Infraestrutura LLM")
+    lines.append("# Relatório Executivo - Sizing de Infraestrutura para Inferência")
     lines.append("")
     lines.append(f"**Modelo:** {model.name}  ")
     lines.append(f"**Servidor:** {server.name}  ")

@@ -29,7 +29,7 @@ def format_full_report(
     
     # Cabeçalho
     lines.append("=" * 100)
-    lines.append("RELATÓRIO COMPLETO DE SIZING - INFERÊNCIA DE LLM")
+    lines.append("RELATÓRIO COMPLETO DE SIZING - INFRAESTRUTURA PARA INFERÊNCIA")
     lines.append("=" * 100)
     lines.append("")
     

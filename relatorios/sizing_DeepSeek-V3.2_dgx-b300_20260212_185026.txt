@@ -1,0 +1,228 @@
+====================================================================================================
+RELATÓRIO COMPLETO DE SIZING - INFRAESTRUTURA PARA INFERÊNCIA
+====================================================================================================
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 1: ENTRADAS                                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Modelo: DeepSeek-V3.2
+  • Camadas: 61
+  • KV Heads: 128
+  • Head Dim: 56
+  • Max Context: 163,840
+  • Attention Pattern: sliding
+
+Servidor: dgx-b300
+  • GPUs: 8
+  • HBM per GPU: 288 GB
+  • HBM Total: 2145.8 GiB
+  • Potência máxima: 14.5 kW
+  • Rack: 10U
+
+Concorrência Alvo: 1,000 sessões
+Contexto Efetivo: 131,072 tokens
+Precisão KV: fp8
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2: CONSUMO REAL DE VRAM                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+CONSUMO UNITÁRIO:
+  • Pesos do modelo: 637.96 GiB
+  • KV cache por sessão: 1.67 GiB
+  • Overhead runtime: 120.0 GiB
+
+BUDGET E CAPACIDADE POR NÓ:
+  • HBM total: 2145.8 GiB
+  • Budget para sessões: 971.5 GiB
+  • Sessões suportadas: 582
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2.5: PERFIL DE STORAGE                                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Storage: netapp_a_series
+  • Tipo: nvme
+  • Capacidade total: 368.64 TB
+  • Capacidade utilizável: 290.43 TB
+  • IOPS leitura (max): 1,126,081
+  • IOPS escrita (max): 1,126,081
+  • Throughput leitura: 37389.4 MB/s (36.51 GB/s)
+  • Throughput escrita: 37389.4 MB/s (36.51 GB/s)
+  • Latência leitura (p50/p99): 0.08 / 0.15 ms
+  • Latência escrita (p50/p99): 0.10 / 0.20 ms
+  • Consumo físico: 14U rack, 12.8 kW
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2.6: POLÍTICA DE MARGEM DE CAPACIDADE                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Política Ativa: parameters.json
+Margem Aplicada: 50%
+Tempo Alvo de Carga: 900 segundos
+Justificativa da Margem: Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional. target_load_time_sec define o tempo máximo aceitável (em segundos) para carregar pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage.
+
+Observação: O tempo alvo de 900s define o tempo máximo aceitável para carregar
+os pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage.
+
+TABELA DE APLICAÇÃO DE MARGEM (Cenário RECOMENDADO):
+
+Métrica                        Valor Base (TB)    Margem (%)      Valor Recomendado (TB)   
+----------------------------------------------------------------------------------------
+Storage (modelo)               6.23               50              9.35                     
+Storage (cache)                3.70               50              5.55                     
+Storage (logs)                 12.07              50              18.10                    
+Storage (operacional)          0.06               50              0.06                     
+----------------------------------------------------------------------------------------
+TOTAL                          24.70              50              37.05                    
+
+RACIONAL OPERACIONAL:
+  • Fórmula: Valor Recomendado = Valor Base × (1 + 0.50)
+  • Origem: parameters.json
+  • Justificativa Operacional:
+    - Crescimento orgânico da plataforma sem reengenharia
+    - Retenção adicional de logs para auditoria e análise post-mortem
+    - Expansão futura de capacidade sem pressão operacional
+    - Redução de risco de subdimensionamento e indisponibilidade
+    - Margem de segurança para eventos não previstos (cascading failures, warmup concorrente)
+
+NOTA EXECUTIVA:
+  O valor BASE (24.70 TB) representa o dimensionamento técnico mínimo.
+  O valor RECOMENDADO (37.05 TB) incorpora margem estratégica de 50% para resiliência operacional.
+  Esta margem é governada por política organizacional e pode ser ajustada via --capacity-margin CLI ou parameters.json.
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 2.7: VOLUME DA PLATAFORMA POR SERVIDOR                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Volume Estrutural: 675 GB/servidor (0.66 TB/servidor)
+Fonte: 4 nós × 0.66 TB = 2.64 TB total
+
+TABELA DE BREAKDOWN POR COMPONENTE:
+
+Componente                               Volume/Servidor (GB)   Volume Total (TB)    Observação          
+------------------------------------------------------------------------------------------------------
+Sistema Operacional                      120                    0.47                 Ubuntu/RHEL+drivers 
+NVIDIA AI Enterprise                     250                    0.98                 CUDA,cuDNN,TensorRT 
+Runtime de Containers                    80                     0.31                 Docker,K8s,imagens  
+Engines de Inferência                    150                    0.59                 TensorRT-LLM,vLLM,NIM
+Dependências da Plataforma               50                     0.20                 Python,NCCL,ML libs 
+Configuração e Metadados                 25                     0.10                 Helm,certs,secrets  
+------------------------------------------------------------------------------------------------------
+TOTAL por servidor                       675                    2.64                                     
+
+TOTAL PLATAFORMA (todos os 4 nós): 2.64 TB
+
+NOTA OPERACIONAL:
+Cada servidor DGX requer 0.66 TB para a pilha completa de software. Total de 2.64 TB para 4 nó(s). Este volume é fixo e não varia com concorrência ou modelo. Crítico para boot, runtime e operação da plataforma.
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 3: RESULTADOS POR CENÁRIO                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+====================================================================================================
+CENÁRIO: MÍNIMO
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 2
+  • Sessões por nó (capacidade): 582
+  • Sessões por nó (operando): 500
+  • VRAM por nó (efetiva): 1591.9 GiB (74.2% HBM)
+
+STORAGE:
+  • Volumetria total (BASE): 18.38 TB
+  • Volumetria total (RECOMENDADA): 27.58 TB (base + 50%)
+    - Modelo (base/recomendado): 3.12 / 4.67 TB
+    - Cache (base/recomendado): 1.85 / 2.78 TB
+    - Logs (base/recomendado): 12.07 / 18.10 TB
+    - Operacional (base/recomendado): 0.03 / 0.03 TB
+    - Plataforma (base/recomendado): 1.32 / 1.98 TB (0.66 TB/servidor × 2 nós)
+  • IOPS (pico): 75,000 R / 3,000 W
+  • IOPS (steady): 2,000 R / 1,000 W
+  • Throughput (pico): 23.53 R / 0.01 W GB/s
+  • Throughput (steady): 1.00 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 29.0 kW
+  • Energia (Storage): 12.8 kW
+  • Energia (Total): 41.8 kW
+  • Rack (Compute): 20U
+  • Rack (Storage): 14U
+  • Rack (Total): 34U
+  • HA: none
+
+====================================================================================================
+CENÁRIO: RECOMENDADO
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 4
+  • Sessões por nó (capacidade): 582
+  • Sessões por nó (operando): 250
+  • VRAM por nó (efetiva): 1175.0 GiB (54.8% HBM)
+
+STORAGE:
+  • Volumetria total (BASE): 24.70 TB
+  • Volumetria total (RECOMENDADA): 37.05 TB (base + 50%)
+    - Modelo (base/recomendado): 6.23 / 9.35 TB
+    - Cache (base/recomendado): 3.70 / 5.55 TB
+    - Logs (base/recomendado): 12.07 / 18.10 TB
+    - Operacional (base/recomendado): 0.06 / 0.06 TB
+    - Plataforma (base/recomendado): 2.64 / 3.96 TB (0.66 TB/servidor × 4 nós)
+  • IOPS (pico): 75,000 R / 3,000 W
+  • IOPS (steady): 4,000 R / 1,000 W
+  • Throughput (pico): 15.81 R / 0.01 W GB/s
+  • Throughput (steady): 2.00 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 58.0 kW
+  • Energia (Storage): 12.8 kW
+  • Energia (Total): 70.8 kW
+  • Rack (Compute): 40U
+  • Rack (Storage): 14U
+  • Rack (Total): 54U
+  • HA: n+1
+
+====================================================================================================
+CENÁRIO: IDEAL
+====================================================================================================
+
+COMPUTAÇÃO:
+  • Nós DGX: 5
+  • Sessões por nó (capacidade): 540
+  • Sessões por nó (operando): 200
+  • VRAM por nó (efetiva): 1091.6 GiB (50.9% HBM)
+
+STORAGE:
+  • Volumetria total (BASE): 53.15 TB
+  • Volumetria total (RECOMENDADA): 79.73 TB (base + 50%)
+    - Modelo (base/recomendado): 7.79 / 11.68 TB
+    - Cache (base/recomendado): 5.76 / 8.64 TB
+    - Logs (base/recomendado): 36.21 / 54.31 TB
+    - Operacional (base/recomendado): 0.10 / 0.10 TB
+    - Plataforma (base/recomendado): 3.30 / 4.94 TB (0.66 TB/servidor × 5 nós)
+  • IOPS (pico): 100,000 R / 4,000 W
+  • IOPS (steady): 5,000 R / 1,000 W
+  • Throughput (pico): 36.29 R / 0.02 W GB/s
+  • Throughput (steady): 2.50 R / 0.00 W GB/s
+
+INFRAESTRUTURA FÍSICA:
+  • Energia (Compute): 72.5 kW
+  • Energia (Storage): 12.8 kW
+  • Energia (Total): 85.3 kW
+  • Rack (Compute): 50U
+  • Rack (Storage): 14U
+  • Rack (Total): 64U
+  • HA: n+2
+
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ SEÇÃO 4: ALERTAS E AVISOS                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ℹ️  --tensor-parallel não especificado. Assumindo TP = GPUs do servidor (8).
+
+====================================================================================================
+FIM DO RELATÓRIO
+====================================================================================================
