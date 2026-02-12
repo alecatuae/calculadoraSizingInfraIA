@@ -203,9 +203,9 @@ def format_executive_markdown(
         if s.storage:
             st = s.storage
             lines.append(f"| **Storage total** | **{st.storage_total_recommended_tb:.2f} TB** |")
-            lines.append(f"| Storage (modelo) | {st.storage_model_tb:.2f} TB |")
-            lines.append(f"| Storage (cache) | {st.storage_cache_tb:.2f} TB |")
-            lines.append(f"| Storage (logs) | {st.storage_logs_tb:.2f} TB |")
+            lines.append(f"| Storage (modelo) | {st.storage_model_recommended_tb:.2f} TB |")
+            lines.append(f"| Storage (cache) | {st.storage_cache_recommended_tb:.2f} TB |")
+            lines.append(f"| Storage (logs) | {st.storage_logs_recommended_tb:.2f} TB |")
             lines.append(f"| IOPS (pico R/W) | {st.iops_read_peak:,} / {st.iops_write_peak:,} |")
             lines.append(f"| Throughput (pico R/W) | {st.throughput_read_peak_gbps:.1f} / {st.throughput_write_peak_gbps:.1f} GB/s |")
         
