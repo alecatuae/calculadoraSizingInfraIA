@@ -22,12 +22,14 @@ class CapacityPolicy:
     Attributes:
         margin_percent: Percentual de margem (0.0 a 1.0). Ex: 0.50 = 50%
         apply_to: Lista de métricas às quais aplicar a margem
+        target_load_time_sec: Tempo máximo (segundos) para carregar modelo no restart
         notes: Justificativa da política
         source: Origem da política (arquivo ou CLI override)
     """
     
     margin_percent: float
     apply_to: List[str]
+    target_load_time_sec: float = 60.0  # Default: 60 segundos
     notes: str = ""
     source: str = "parameters.json"
     
@@ -42,6 +44,18 @@ class CapacityPolicy:
             raise ValueError(
                 f"capacity_margin_percent não pode ser maior que 1.0 (100%): {self.margin_percent}. "
                 f"Use valores entre 0.0 e 1.0 (ex: 0.50 para 50%)"
+            )
+        
+        # Validação de target_load_time_sec
+        if self.target_load_time_sec <= 0:
+            raise ValueError(
+                f"target_load_time_sec deve ser > 0: {self.target_load_time_sec} segundos"
+            )
+        
+        if self.target_load_time_sec < 10:
+            raise ValueError(
+                f"target_load_time_sec muito baixo: {self.target_load_time_sec}s. "
+                f"Use valores >= 10 segundos para garantir viabilidade com storage real."
             )
         
         valid_targets = {
@@ -125,6 +139,7 @@ def load_capacity_policy(
             f'{{\n'
             f'  "capacity_margin_percent": 0.50,\n'
             f'  "apply_margin_to": ["storage_total", "storage_model", "storage_cache", "storage_logs"],\n'
+            f'  "target_load_time_sec": 60.0,\n'
             f'  "notes": "Margem recomendada para crescimento e eventos não previstos."\n'
             f'}}\n'
         )
@@ -146,9 +161,13 @@ def load_capacity_policy(
     margin_percent = override_margin if override_margin is not None else data["capacity_margin_percent"]
     source = f"CLI override (--capacity-margin {override_margin})" if override_margin is not None else filepath
     
+    # Carregar target_load_time_sec (com default se não existir para retrocompatibilidade)
+    target_load_time_sec = data.get("target_load_time_sec", 60.0)
+    
     policy = CapacityPolicy(
         margin_percent=margin_percent,
         apply_to=data["apply_margin_to"],
+        target_load_time_sec=target_load_time_sec,
         notes=data.get("notes", ""),
         source=source
     )

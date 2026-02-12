@@ -345,6 +345,7 @@ def calc_storage_throughput(
     concurrency: int,
     num_nodes: int,
     storage_model_tb: float,
+    target_load_time_sec: float,
     scenario: str = "recomendado"
 ) -> tuple[Dict[str, float], Dict[str, Any]]:
     """
@@ -358,11 +359,10 @@ def calc_storage_throughput(
     Retorna: (throughput_dict, rationale)
     """
     # Throughput de leitura PEAK (startup/restart)
-    # Meta: carregar modelo completo em < 60 segundos
+    # Meta: carregar modelo completo em tempo configurável
     # Assumindo restart de 25% dos nós simultaneamente
     nodes_restarting = max(1, int(num_nodes * 0.25))
     model_per_node_gib = (storage_model_tb * 1024) / num_nodes
-    target_load_time_sec = 60.0
     
     throughput_read_per_node = model_per_node_gib / target_load_time_sec
     throughput_read_peak_gbps = throughput_read_per_node * nodes_restarting
@@ -506,7 +506,8 @@ def calc_storage_requirements(
     
     # Calcular Throughput (baseado em valores recomendados)
     throughput_dict, rationale_throughput = calc_storage_throughput(
-        concurrency, num_nodes, storage_total_recommended_tb, scenario
+        concurrency, num_nodes, storage_total_recommended_tb, 
+        capacity_policy.target_load_time_sec, scenario
     )
     
     # Consolidar rationale
@@ -534,6 +535,7 @@ def calc_storage_requirements(
         },
         "capacity_policy": {
             "margin_percent": capacity_policy.margin_percent,
+            "target_load_time_sec": capacity_policy.target_load_time_sec,
             "source": capacity_policy.source,
             "notes": capacity_policy.notes
         },

@@ -6,5 +6,6 @@
     "storage_cache",
     "storage_logs"
   ],
-  "notes": "Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional."
+  "target_load_time_sec": 60.0,
+  "notes": "Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional. target_load_time_sec define o tempo máximo aceitável (em segundos) para carregar pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage."
 }

@@ -95,6 +95,17 @@ def main():
             override_margin=config.capacity_margin
         )
         
+        # Aplicar override de target_load_time se fornecido via CLI
+        if config.target_load_time is not None:
+            if config.target_load_time <= 0:
+                print(f"❌ ERRO: --target-load-time deve ser > 0: {config.target_load_time}")
+                sys.exit(1)
+            if config.target_load_time < 10:
+                print(f"⚠️  AVISO: --target-load-time muito baixo ({config.target_load_time}s). Valores < 10s podem não ser viáveis com storage real.")
+            capacity_policy.target_load_time_sec = config.target_load_time
+            if config.verbose:
+                print(f"   ⚠️  Override: Tempo de carga = {config.target_load_time}s (CLI)")
+        
         # Carregar profile de storage da plataforma
         platform_storage_profile = load_platform_storage_profile(
             filepath="platform_storage_profile.json"
@@ -106,6 +117,8 @@ def main():
             print(f"   ✓ Storage: {storage.name}")
             margin_source = "CLI override" if config.capacity_margin is not None else "parameters.json"
             print(f"   ✓ Margem de Capacidade: {capacity_policy.margin_percent*100:.0f}% ({margin_source})")
+            load_time_source = "CLI override" if config.target_load_time is not None else "parameters.json"
+            print(f"   ✓ Tempo de Carga Alvo: {capacity_policy.target_load_time_sec:.0f}s ({load_time_source})")
             print(f"   ✓ Plataforma Storage: {platform_storage_profile.total_per_server_gb:.0f} GB/servidor ({platform_storage_profile.total_per_server_tb:.2f} TB)")
         
         # 4. Calcular KV cache

@@ -38,6 +38,7 @@ class CLIConfig:
     
     # Política de Capacidade
     capacity_margin: Optional[float]
+    target_load_time: Optional[float]
     
     # Outputs
     executive_report: bool
@@ -96,6 +97,8 @@ def create_arg_parser() -> argparse.ArgumentParser:
     # Política de Capacidade
     parser.add_argument("--capacity-margin", type=float,
                         help="Override da margem de capacidade de storage (0.0 a 1.0, ex: 0.30 = 30%%. Default: carregado de parameters.json)")
+    parser.add_argument("--target-load-time", type=float,
+                        help="Tempo alvo (segundos) para carregar modelo no restart (default: 60s, definido em parameters.json)")
     
     # Saídas
     parser.add_argument("--executive-report", action="store_true",
@@ -138,6 +141,7 @@ def parse_cli_args() -> CLIConfig:
             warmup_read_pattern=args.warmup_read_pattern,
             warmup_utilization_ratio=args.warmup_utilization_ratio,
             capacity_margin=args.capacity_margin,
+            target_load_time=args.target_load_time,
             executive_report=args.executive_report,
             verbose=args.verbose,
             validate_only=True
@@ -163,6 +167,7 @@ def parse_cli_args() -> CLIConfig:
         warmup_read_pattern=args.warmup_read_pattern,
         warmup_utilization_ratio=args.warmup_utilization_ratio,
         capacity_margin=args.capacity_margin,
+        target_load_time=args.target_load_time,
         executive_report=args.executive_report,
         verbose=args.verbose,
         validate_only=args.validate_only

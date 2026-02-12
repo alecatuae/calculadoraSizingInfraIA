@@ -112,10 +112,15 @@ def format_full_report(
     margin_pct = capacity_policy_info.get("margin_percent", 0) * 100
     margin_source = capacity_policy_info.get("source", "parameters.json")
     margin_notes = capacity_policy_info.get("notes", "")
+    target_load_time = capacity_policy_info.get("target_load_time_sec", 60.0)
     
     lines.append(f"Política Ativa: {margin_source}")
     lines.append(f"Margem Aplicada: {margin_pct:.0f}%")
-    lines.append(f"Justificativa: {margin_notes}")
+    lines.append(f"Tempo Alvo de Carga: {target_load_time:.0f} segundos")
+    lines.append(f"Justificativa da Margem: {margin_notes}")
+    lines.append("")
+    lines.append(f"Observação: O tempo alvo de {target_load_time:.0f}s define o tempo máximo aceitável para carregar")
+    lines.append(f"os pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage.")
     lines.append("")
     
     lines.append("TABELA DE APLICAÇÃO DE MARGEM (Cenário RECOMENDADO):")
@@ -363,6 +368,7 @@ def format_json_report(
         },
         "capacity_policy": {
             "margin_percent": scenarios["recommended"].storage.margin_percent if scenarios["recommended"].storage else 0.0,
+            "target_load_time_sec": scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("target_load_time_sec", 60.0) if scenarios["recommended"].storage else 60.0,
             "applied_to": [
                 "storage_total",
                 "storage_model",
