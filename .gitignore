@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Relatórios gerados (comentar esta linha se quiser versionar os relatórios)
+relatorios/
+*.txt
+*.json
+*.md
+!README.md
+!QUICKSTART.md
+!ARCHITECTURE.md
+!servers.schema.md
+!README_SCHEMAS.md
+
+# Logs
+*.log
+logs/
+
+# Jupyter Notebooks (se houver)
+.ipynb_checkpoints/
+*.ipynb
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# Configurações locais ou sensíveis (descomentar se necessário)
+# .env
+# .env.local
+# config.local.json
+# credentials.json
+
+# Arquivos temporários
+*.tmp
+*.bak
+*.backup
+.cache/
+
+# Transcripts do Cursor/AI (opcional)
+.cursor/
+agent-transcripts/
