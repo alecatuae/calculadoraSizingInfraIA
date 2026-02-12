@@ -124,82 +124,160 @@
       "manufacturer": "NVIDIA",
       "form_factor": "Rackmount",
       "rack_units_u": 10,
-      
+
+      "physical": {
+        "dimensions_mm": {
+          "width": 482.3,
+          "depth": 897.1,
+          "height": 444
+        },
+        "dimensions_in": {
+          "width": 19.0,
+          "depth": 35.3,
+          "height": 17.5
+        },
+        "weight_kg_max": 142.4,
+        "weight_lb_max": 313.9
+      },
+
       "cpu": {
-        "model": "Dual AMD EPYC 9754",
-        "cores_total": 256,
-        "threads_total": 512,
-        "base_frequency_ghz": 2.25,
-        "max_boost_frequency_ghz": 3.1
+        "vendor": "Intel",
+        "model": "Xeon 8570 (PCIe Gen5)",
+        "sockets": 2,
+        "cores_per_socket": 56,
+        "total_cores": 112,
+        "base_clock_ghz": 2.1,
+        "max_boost_clock_ghz": 4.0
       },
-      
+
       "system_memory": {
-        "capacity_total_tb": 2.0,
+        "installed_tb": 2,
+        "max_supported_tb": 4,
         "type": "DDR5",
-        "speed_mhz": 4800
+        "dimms": 32
       },
-      
+
       "gpu": {
         "count": 8,
-        "model": "NVIDIA B200",
+        "model": "NVIDIA B200 Tensor Core GPU",
         "hbm_per_gpu_gb": 180,
         "total_hbm_gb": 1440,
-        "nvlink_bandwidth_tbps_total": null,
-        "nvlink_generation": "5th Generation NVSwitch"
+        "nvlink_bandwidth_tbps_total": 14.4,
+        "nvlink_generation": "5th Generation NVSwitch",
+        "nvlink_switches": {
+          "count": 2,
+          "description": "2x 5th generation NVLink switches"
+        }
       },
-      
+
+      "storage": {
+        "os": {
+          "type": "NVMe M.2 SSD",
+          "count": 2,
+          "capacity_tb_each": 1.92,
+          "raid": "RAID 1"
+        },
+        "data_cache": {
+          "type": "NVMe U.2 SED",
+          "count": 8,
+          "capacity_tb_each": 3.84,
+          "raid": "RAID 0"
+        }
+      },
+
+      "networking": {
+        "cluster": {
+          "osfp_ports": 4,
+          "nics": {
+            "model": "NVIDIA ConnectX-7",
+            "ports": 8,
+            "port_type": "Single Port",
+            "speeds": {
+              "infiniband_default": "Up to 400Gbps",
+              "ethernet": [
+                "400GbE",
+                "200GbE",
+                "100GbE",
+                "50GbE",
+                "40GbE",
+                "25GbE",
+                "10GbE"
+              ]
+            }
+          }
+        },
+        "storage_and_in_band_management": {
+          "dpus": {
+            "model": "NVIDIA BlueField-3 DPU",
+            "cards": 2,
+            "ports_per_card": 2,
+            "speeds": {
+              "ethernet_port": [
+                "400GbE",
+                "200GbE",
+                "100GbE",
+                "50GbE",
+                "40GbE",
+                "25GbE",
+                "10GbE"
+              ],
+              "infiniband_port": "Up to 400Gbps"
+            }
+          }
+        },
+        "out_of_band_management": {
+          "bmc_interface": "1GbE RJ45",
+          "bmc_features": [
+            "Redfish",
+            "IPMI",
+            "SNMP",
+            "KVM",
+            "Web UI"
+          ]
+        },
+        "optional_system_management_interfaces": {
+          "slot_3": "Dual port 100GbE",
+          "rj45": "10GbE RJ45 interface"
+        }
+      },
+
       "power": {
         "power_kw_max": 14.3,
         "power_supplies": {
           "count": 6,
-          "rating_each_watts": 3000,
-          "redundancy": "N+1"
+          "capacity_w_each": 3300,
+          "redundancy": "5+1"
         },
-        "input_voltage": ["200-240VAC", "380-480VAC"],
-        "max_current": {
-          "208v_3phase_amps": 51,
-          "480v_3phase_amps": 23
-        }
+        "input_voltage": ["200-240 VAC"],
+        "input_current_a_each": 16,
+        "input_frequency_hz": "50-60"
       },
-      
+
       "thermal": {
-        "heat_output_btu_hr_max": null,
-        "ambient_temp_operating_c_min": 5,
-        "ambient_temp_operating_c_max": 30
+        "heat_output_btu_hr_max": 48794,
+        "ambient_temp_operating_c_min": 10,
+        "ambient_temp_operating_c_max": 35
       },
-      
+
       "cooling": {
-        "airflow_cfm": null,
+        "airflow_cfm": 1550,
         "cooling_type": "Air-cooled with front-to-back airflow"
       },
-      
-      "storage": {
-        "boot_drives": "2x 960GB M.2 NVMe (RAID 1)",
-        "internal_nvme_slots": 8,
-        "max_internal_storage_tb": 61.44
+
+      "environmental": {
+        "relative_humidity_percent": {
+          "min": 20,
+          "max": 80
+        }
       },
-      
-      "networking": {
-        "infiniband": "8x 400Gb/s NDR InfiniBand/Ethernet",
-        "management": "1x 1GbE RJ45 (BMC)"
-      },
-      
+
       "software": {
         "os_supported": ["Ubuntu 20.04/22.04 LTS", "RHEL 8.x/9.x"],
         "nvidia_ai_enterprise": "Included",
         "cuda_version": "12.x"
       },
-      
-      "physical": {
-        "dimensions_mm": {
-          "width": 482,
-          "depth": 1067,
-          "height": 444
-        },
-        "weight_kg_max": 130
-      },
-      
-      "notes": "DGX B200: 8x B200 GPUs, 180GB HBM por GPU. Form Factor: 10U Rackmount, Power: 14.3 kW max. Dados de Mechanical e Power Specifications.",
+
+      "notes": "DGX B200 (1,440 GB total GPU memory): 8x B200 GPUs, 2x Intel Xeon 8570 (56c each), 2x 5th-gen NVLink switches (14.4 TB/s agg), 10U, 14.3 kW max, 48,794 BTU/hr, 1,550 CFM. Component list inclui RAID (OS=RAID1; Data Cache=RAID0) e perfis de rede (ConnectX-7 e BlueField-3).",
       "source": [
         "https://docs.nvidia.com/dgx/dgxb200-user-guide/introduction-to-dgxb200.html"
       ]
