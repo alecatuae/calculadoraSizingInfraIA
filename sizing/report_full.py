@@ -101,6 +101,51 @@ def format_full_report(
         lines.append(f"  • Consumo físico: {storage.rack_units_u}U rack, {storage.power_kw:.1f} kW")
     lines.append("")
     
+    # Seção 2.6: Política de Margem de Capacidade
+    lines.append("┌" + "─" * 98 + "┐")
+    lines.append("│" + " SEÇÃO 2.6: POLÍTICA DE MARGEM DE CAPACIDADE".ljust(98) + "│")
+    lines.append("└" + "─" * 98 + "┘")
+    lines.append("")
+    
+    # Obter informações da política do primeiro cenário
+    capacity_policy_info = rec.storage.rationale.get("capacity_policy", {})
+    margin_pct = capacity_policy_info.get("margin_percent", 0) * 100
+    margin_source = capacity_policy_info.get("source", "parameters.json")
+    margin_notes = capacity_policy_info.get("notes", "")
+    
+    lines.append(f"Política Ativa: {margin_source}")
+    lines.append(f"Margem Aplicada: {margin_pct:.0f}%")
+    lines.append(f"Justificativa: {margin_notes}")
+    lines.append("")
+    
+    lines.append("TABELA DE APLICAÇÃO DE MARGEM (Cenário RECOMENDADO):")
+    lines.append("")
+    lines.append(f"{'Métrica':<30} {'Valor Base (TB)':<18} {'Margem (%)':<15} {'Valor Recomendado (TB)':<25}")
+    lines.append("-" * 88)
+    lines.append(f"{'Storage (modelo)':<30} {rec.storage.storage_model_base_tb:<18.2f} {margin_pct:<15.0f} {rec.storage.storage_model_recommended_tb:<25.2f}")
+    lines.append(f"{'Storage (cache)':<30} {rec.storage.storage_cache_base_tb:<18.2f} {margin_pct:<15.0f} {rec.storage.storage_cache_recommended_tb:<25.2f}")
+    lines.append(f"{'Storage (logs)':<30} {rec.storage.storage_logs_base_tb:<18.2f} {margin_pct:<15.0f} {rec.storage.storage_logs_recommended_tb:<25.2f}")
+    lines.append(f"{'Storage (operacional)':<30} {rec.storage.storage_operational_base_tb:<18.2f} {margin_pct:<15.0f} {rec.storage.storage_operational_recommended_tb:<25.2f}")
+    lines.append("-" * 88)
+    lines.append(f"{'TOTAL':<30} {rec.storage.storage_total_base_tb:<18.2f} {margin_pct:<15.0f} {rec.storage.storage_total_recommended_tb:<25.2f}")
+    lines.append("")
+    
+    lines.append("RACIONAL OPERACIONAL:")
+    lines.append(f"  • Fórmula: Valor Recomendado = Valor Base × (1 + {margin_pct/100:.2f})")
+    lines.append(f"  • Origem: {margin_source}")
+    lines.append("  • Justificativa Operacional:")
+    lines.append("    - Crescimento orgânico da plataforma sem reengenharia")
+    lines.append("    - Retenção adicional de logs para auditoria e análise post-mortem")
+    lines.append("    - Expansão futura de capacidade sem pressão operacional")
+    lines.append("    - Redução de risco de subdimensionamento e indisponibilidade")
+    lines.append("    - Margem de segurança para eventos não previstos (cascading failures, warmup concorrente)")
+    lines.append("")
+    lines.append("NOTA EXECUTIVA:")
+    lines.append(f"  O valor BASE ({rec.storage.storage_total_base_tb:.2f} TB) representa o dimensionamento técnico mínimo.")
+    lines.append(f"  O valor RECOMENDADO ({rec.storage.storage_total_recommended_tb:.2f} TB) incorpora margem estratégica de {margin_pct:.0f}% para resiliência operacional.")
+    lines.append("  Esta margem é governada por política organizacional e pode ser ajustada via --capacity-margin CLI ou parameters.json.")
+    lines.append("")
+    
     # Seção 3: Resultados por Cenário
     lines.append("┌" + "─" * 98 + "┐")
     lines.append("│" + " SEÇÃO 3: RESULTADOS POR CENÁRIO".ljust(98) + "│")
@@ -122,11 +167,13 @@ def format_full_report(
         
         if s.storage:
             lines.append("STORAGE:")
-            lines.append(f"  • Volumetria total: {s.storage.storage_total_tb:.2f} TB")
-            lines.append(f"    - Modelo: {s.storage.storage_model_tb:.2f} TB")
-            lines.append(f"    - Cache: {s.storage.storage_cache_tb:.2f} TB")
-            lines.append(f"    - Logs: {s.storage.storage_logs_tb:.2f} TB")
-            lines.append(f"    - Operacional: {s.storage.storage_operational_tb:.2f} TB")
+            margin_pct = s.storage.margin_percent * 100
+            lines.append(f"  • Volumetria total (BASE): {s.storage.storage_total_base_tb:.2f} TB")
+            lines.append(f"  • Volumetria total (RECOMENDADA): {s.storage.storage_total_recommended_tb:.2f} TB (base + {margin_pct:.0f}%)")
+            lines.append(f"    - Modelo (base/recomendado): {s.storage.storage_model_base_tb:.2f} / {s.storage.storage_model_recommended_tb:.2f} TB")
+            lines.append(f"    - Cache (base/recomendado): {s.storage.storage_cache_base_tb:.2f} / {s.storage.storage_cache_recommended_tb:.2f} TB")
+            lines.append(f"    - Logs (base/recomendado): {s.storage.storage_logs_base_tb:.2f} / {s.storage.storage_logs_recommended_tb:.2f} TB")
+            lines.append(f"    - Operacional (base/recomendado): {s.storage.storage_operational_base_tb:.2f} / {s.storage.storage_operational_recommended_tb:.2f} TB")
             lines.append(f"  • IOPS (pico): {s.storage.iops_read_peak:,} R / {s.storage.iops_write_peak:,} W")
             lines.append(f"  • IOPS (steady): {s.storage.iops_read_steady:,} R / {s.storage.iops_write_steady:,} W")
             lines.append(f"  • Throughput (pico): {s.storage.throughput_read_peak_gbps:.2f} R / {s.storage.throughput_write_peak_gbps:.2f} W GB/s")
@@ -208,11 +255,22 @@ def format_json_report(
         # Adicionar storage se disponível
         if s.storage:
             result["results"]["storage"] = {
-                "storage_model_tb": round(s.storage.storage_model_tb, 3),
-                "storage_cache_tb": round(s.storage.storage_cache_tb, 3),
-                "storage_logs_tb": round(s.storage.storage_logs_tb, 3),
-                "storage_operational_tb": round(s.storage.storage_operational_tb, 3),
-                "storage_total_tb": round(s.storage.storage_total_tb, 3),
+                # Valores BASE (técnicos)
+                "storage_model_base_tb": round(s.storage.storage_model_base_tb, 3),
+                "storage_cache_base_tb": round(s.storage.storage_cache_base_tb, 3),
+                "storage_logs_base_tb": round(s.storage.storage_logs_base_tb, 3),
+                "storage_operational_base_tb": round(s.storage.storage_operational_base_tb, 3),
+                "storage_total_base_tb": round(s.storage.storage_total_base_tb, 3),
+                # Valores RECOMENDADOS (estratégicos com margem)
+                "storage_model_recommended_tb": round(s.storage.storage_model_recommended_tb, 3),
+                "storage_cache_recommended_tb": round(s.storage.storage_cache_recommended_tb, 3),
+                "storage_logs_recommended_tb": round(s.storage.storage_logs_recommended_tb, 3),
+                "storage_operational_recommended_tb": round(s.storage.storage_operational_recommended_tb, 3),
+                "storage_total_recommended_tb": round(s.storage.storage_total_recommended_tb, 3),
+                # Margem aplicada
+                "margin_applied": s.storage.margin_applied,
+                "margin_percent": round(s.storage.margin_percent, 3),
+                # IOPS e Throughput
                 "iops_read_peak": s.storage.iops_read_peak,
                 "iops_write_peak": s.storage.iops_write_peak,
                 "iops_read_steady": s.storage.iops_read_steady,
@@ -252,6 +310,18 @@ def format_json_report(
             "latency_write_ms_p99": storage.latency_write_ms_p99,
             "rack_units_u": storage.rack_units_u,
             "power_kw": storage.power_kw
+        },
+        "capacity_policy": {
+            "margin_percent": scenarios["recommended"].storage.margin_percent if scenarios["recommended"].storage else 0.0,
+            "applied_to": [
+                "storage_total",
+                "storage_model",
+                "storage_cache",
+                "storage_logs",
+                "storage_operational"
+            ],
+            "source": scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("source", "parameters.json") if scenarios["recommended"].storage else "N/A",
+            "notes": scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("notes", "") if scenarios["recommended"].storage else ""
         },
         "scenarios": {
             "minimum": scenario_to_dict(scenarios["minimum"]),

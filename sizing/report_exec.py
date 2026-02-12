@@ -40,23 +40,38 @@ def format_exec_summary(
     lines.append("")
     
     # Tabela de cenários
-    lines.append("-" * 130)
-    header = f"{'Cenário':<20} {'Nós':<8} {'kW Total':<12} {'Rack Total':<12} {'Storage (TB)':<15} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
+    lines.append("-" * 155)
+    header = f"{'Cenário':<20} {'Nós':<8} {'kW Total':<12} {'Rack Total':<12} {'Storage Recomendado (TB)':<40} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
     lines.append(header)
-    lines.append("-" * 130)
+    lines.append("-" * 155)
     
     for key in ["minimum", "recommended", "ideal"]:
         s = scenarios[key]
-        storage_tb = f"{s.storage.storage_total_tb:.1f}" if s.storage else "N/A"
-        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw_with_storage:<12.1f} {s.total_rack_u_with_storage:<12} {storage_tb:<15} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
+        if s.storage:
+            # Mostrar valor RECOMENDADO (com margem)
+            storage_base = s.storage.storage_total_base_tb
+            storage_recommended = s.storage.storage_total_recommended_tb
+            margin_pct = s.storage.margin_percent * 100
+            storage_display = f"{storage_recommended:.1f} (base: {storage_base:.1f} TB + {margin_pct:.0f}%)"
+        else:
+            storage_display = "N/A"
+        
+        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw_with_storage:<12.1f} {s.total_rack_u_with_storage:<12} {storage_display:<40} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
         lines.append(row)
     
-    lines.append("-" * 130)
+    lines.append("-" * 155)
     lines.append("")
+    
+    # Nota sobre margem de capacidade
+    if scenarios["recommended"].storage and scenarios["recommended"].storage.margin_applied:
+        margin_pct = scenarios["recommended"].storage.margin_percent * 100
+        margin_source = scenarios["recommended"].storage.rationale.get("capacity_policy", {}).get("source", "parameters.json")
+        lines.append(f"ℹ️  Os valores de storage apresentados já consideram margem adicional de {margin_pct:.0f}% conforme política de capacidade definida em {margin_source}.")
+        lines.append("")
     
     # Recomendação
     rec = scenarios["recommended"]
-    storage_info = f", {rec.storage.storage_total_tb:.1f} TB storage" if rec.storage else ""
+    storage_info = f", {rec.storage.storage_total_recommended_tb:.1f} TB storage" if rec.storage else ""
     lines.append(
         f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw_with_storage:.1f} kW total, {rec.total_rack_u_with_storage}U total{storage_info}) "
         f"atende os requisitos com tolerância a falhas ({rec.config.ha_mode.upper()})."
@@ -115,7 +130,7 @@ def format_executive_markdown(
     storage_rec = rec.storage if rec.storage else None
     lines.append(f"**Recomendação:** {rec.nodes_final} nós DGX {server.name} ")
     if storage_rec:
-        lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack, {storage_rec.storage_total_tb:.1f} TB storage) ")
+        lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack, {storage_rec.storage_total_recommended_tb:.1f} TB storage) ")
     else:
         lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack) ")
     lines.append(f"com tolerância a falhas {rec.config.ha_mode.upper()}.")
@@ -187,7 +202,7 @@ def format_executive_markdown(
         # Storage metrics
         if s.storage:
             st = s.storage
-            lines.append(f"| **Storage total** | **{st.storage_total_tb:.2f} TB** |")
+            lines.append(f"| **Storage total** | **{st.storage_total_recommended_tb:.2f} TB** |")
             lines.append(f"| Storage (modelo) | {st.storage_model_tb:.2f} TB |")
             lines.append(f"| Storage (cache) | {st.storage_cache_tb:.2f} TB |")
             lines.append(f"| Storage (logs) | {st.storage_logs_tb:.2f} TB |")
@@ -202,19 +217,19 @@ def format_executive_markdown(
             lines.append(f"**Análise Computacional:** Opera no limite da capacidade sem margem para picos ou falhas. ")
             lines.append(f"Risco operacional **alto** - qualquer indisponibilidade de hardware afeta o serviço diretamente. ")
             if s.storage:
-                lines.append(f"**Análise Storage:** Volumetria mínima ({s.storage.storage_total_tb:.1f} TB) para operação steady-state. ")
+                lines.append(f"**Análise Storage:** Volumetria recomendada {s.storage.storage_total_recommended_tb:.1f} TB (base: {s.storage.storage_total_base_tb:.1f} TB) para operação steady-state. ")
                 lines.append(f"IOPS e throughput dimensionados sem margem. Risco de gargalo em scale-out ou restart simultâneo.")
         elif key == "recommended":
             lines.append(f"**Análise Computacional:** Equilibra eficiência e resiliência. Suporta picos de até {s.config.peak_headroom_ratio*100:.0f}% ")
             lines.append(f"e tolera falha de 1 nó sem degradação do serviço. **Adequado para produção.** ")
             if s.storage:
-                lines.append(f"**Análise Storage:** {s.storage.storage_total_tb:.1f} TB com margem operacional (1.5x). ")
+                lines.append(f"**Análise Storage:** {s.storage.storage_total_recommended_tb:.1f} TB recomendado (base: {s.storage.storage_total_base_tb:.1f} TB) com margem de capacidade. ")
                 lines.append(f"IOPS e throughput suportam restart de 25% dos nós + burst de logs. Tempo de recuperação aceitável.")
         else:  # ideal
             lines.append(f"**Análise Computacional:** Máxima resiliência com margem para múltiplas falhas e picos elevados. ")
             lines.append(f"Custo maior, mas risco operacional **mínimo**. Ideal para serviços críticos. ")
             if s.storage:
-                lines.append(f"**Análise Storage:** {s.storage.storage_total_tb:.1f} TB com margem ampla (2x). ")
+                lines.append(f"**Análise Storage:** {s.storage.storage_total_recommended_tb:.1f} TB recomendado (base: {s.storage.storage_total_base_tb:.1f} TB) com margem ampla para máxima resiliência. ")
                 lines.append(f"IOPS e throughput suportam falhas em cascata. Retenção estendida de logs (90 dias). Máxima resiliência.")
         lines.append("")
     
@@ -235,7 +250,7 @@ def format_executive_markdown(
         st_min = scenarios['minimum'].storage
         st_rec = scenarios['recommended'].storage
         st_ideal = scenarios['ideal'].storage
-        lines.append(f"| Storage (TB) | {st_min.storage_total_tb:.1f} | {st_rec.storage_total_tb:.1f} | {st_ideal.storage_total_tb:.1f} |")
+        lines.append(f"| Storage (TB) | {st_min.storage_total_recommended_tb:.1f} | {st_rec.storage_total_recommended_tb:.1f} | {st_ideal.storage_total_recommended_tb:.1f} |")
         lines.append(f"| IOPS pico (R) | {st_min.iops_read_peak:,} | {st_rec.iops_read_peak:,} | {st_ideal.iops_read_peak:,} |")
         lines.append(f"| Throughput pico (R) | {st_min.throughput_read_peak_gbps:.1f} GB/s | {st_rec.throughput_read_peak_gbps:.1f} GB/s | {st_ideal.throughput_read_peak_gbps:.1f} GB/s |")
     
@@ -260,7 +275,7 @@ def format_executive_markdown(
     lines.append(f"- Consome {rec.total_power_kw:.1f} kW e ocupa {rec.total_rack_u}U de rack")
     
     if storage_rec:
-        lines.append(f"- Requer {storage_rec.storage_total_tb:.1f} TB de storage ({storage_name})")
+        lines.append(f"- Requer {storage_rec.storage_total_recommended_tb:.1f} TB de storage ({storage_name}, incluindo margem de capacidade)")
         lines.append(f"  - IOPS pico: {storage_rec.iops_read_peak:,} leitura / {storage_rec.iops_write_peak:,} escrita")
         lines.append(f"  - Throughput pico: {storage_rec.throughput_read_peak_gbps:.1f} GB/s leitura / {storage_rec.throughput_write_peak_gbps:.1f} GB/s escrita")
     

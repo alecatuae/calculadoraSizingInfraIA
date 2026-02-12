@@ -36,6 +36,9 @@ class CLIConfig:
     warmup_read_pattern: str
     warmup_utilization_ratio: float
     
+    # Política de Capacidade
+    capacity_margin: Optional[float]
+    
     # Outputs
     executive_report: bool
     verbose: bool
@@ -90,6 +93,10 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup-utilization-ratio", type=float, default=0.8,
                         help="Fração do storage max utilizável durante warmup (default: 0.8)")
     
+    # Política de Capacidade
+    parser.add_argument("--capacity-margin", type=float,
+                        help="Override da margem de capacidade de storage (0.0 a 1.0, ex: 0.30 = 30%%. Default: carregado de parameters.json)")
+    
     # Saídas
     parser.add_argument("--executive-report", action="store_true",
                         help="Gerar relatório executivo adicional em Markdown")
@@ -130,6 +137,7 @@ def parse_cli_args() -> CLIConfig:
             warmup_concurrency=args.warmup_concurrency,
             warmup_read_pattern=args.warmup_read_pattern,
             warmup_utilization_ratio=args.warmup_utilization_ratio,
+            capacity_margin=args.capacity_margin,
             executive_report=args.executive_report,
             verbose=args.verbose,
             validate_only=True
@@ -154,6 +162,7 @@ def parse_cli_args() -> CLIConfig:
         warmup_concurrency=args.warmup_concurrency,
         warmup_read_pattern=args.warmup_read_pattern,
         warmup_utilization_ratio=args.warmup_utilization_ratio,
+        capacity_margin=args.capacity_margin,
         executive_report=args.executive_report,
         verbose=args.verbose,
         validate_only=args.validate_only

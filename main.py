@@ -10,6 +10,7 @@ from typing import Dict, List
 
 from sizing.cli import parse_cli_args
 from sizing.config_loader import ConfigLoader
+from sizing.capacity_policy import load_capacity_policy
 from sizing.calc_kv import calc_kv_cache
 from sizing.calc_vram import calc_vram
 from sizing.calc_scenarios import create_scenario_configs, calc_scenario, ScenarioResult
@@ -87,10 +88,18 @@ def main():
         server = loader.get_server(config.server_name)
         storage = loader.get_storage(config.storage_name)
         
+        # Carregar política de capacidade
+        capacity_policy = load_capacity_policy(
+            filepath="parameters.json",
+            override_margin=config.capacity_margin
+        )
+        
         if config.verbose:
             print(f"   ✓ Modelo: {model.name}")
             print(f"   ✓ Servidor: {server.name}")
             print(f"   ✓ Storage: {storage.name}")
+            margin_source = "CLI override" if config.capacity_margin is not None else "parameters.json"
+            print(f"   ✓ Margem de Capacidade: {capacity_policy.margin_percent*100:.0f}% ({margin_source})")
         
         # 4. Calcular KV cache
         if config.verbose:
@@ -227,6 +236,7 @@ def main():
                 sessions_per_node=vram_scenario.sessions_per_node,
                 weights_precision=weights_precision,
                 replicas_per_node=config.replicas_per_node,
+                capacity_policy=capacity_policy,
                 scenario=key,
                 retention_days=30  # Será sobrescrito por cenário em calc_storage
             )
@@ -241,9 +251,9 @@ def main():
             scenario.total_rack_u_with_storage = scenario.total_rack_u + scenario.storage_rack_u
             
             # Gerar alertas de storage
-            if storage_reqs.storage_total_tb > storage.usable_capacity_tb:
+            if storage_reqs.storage_total_recommended_tb > storage.usable_capacity_tb:
                 storage_warnings.append(
-                    f"🚨 [{scenario_config.name}] Volumetria total ({storage_reqs.storage_total_tb:.2f} TB) "
+                    f"🚨 [{scenario_config.name}] Volumetria total RECOMENDADA ({storage_reqs.storage_total_recommended_tb:.2f} TB, base: {storage_reqs.storage_total_base_tb:.2f} TB) "
                     f"excede capacidade utilizável do storage ({storage.usable_capacity_tb:.2f} TB)"
                 )
             
@@ -276,10 +286,10 @@ def main():
                 )
             
             # Alerta se cenário mínimo opera próximo do limite (>80%)
-            if key == "minimum" and storage_reqs.storage_total_tb / storage.usable_capacity_tb > 0.80:
+            if key == "minimum" and storage_reqs.storage_total_recommended_tb / storage.usable_capacity_tb > 0.80:
                 storage_warnings.append(
-                    f"⚠️ [MÍNIMO] Volumetria opera acima de 80% da capacidade utilizável "
-                    f"({storage_reqs.storage_total_tb / storage.usable_capacity_tb * 100:.1f}%). "
+                    f"⚠️ [MÍNIMO] Volumetria recomendada opera acima de 80% da capacidade utilizável "
+                    f"({storage_reqs.storage_total_recommended_tb / storage.usable_capacity_tb * 100:.1f}%). "
                     "Risco operacional elevado."
                 )
             

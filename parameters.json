@@ -1,0 +1,10 @@
+{
+  "capacity_margin_percent": 0.50,
+  "apply_margin_to": [
+    "storage_total",
+    "storage_model",
+    "storage_cache",
+    "storage_logs"
+  ],
+  "notes": "Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional."
+}

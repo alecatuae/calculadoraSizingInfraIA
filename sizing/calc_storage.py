@@ -18,12 +18,23 @@ from .storage import StorageProfile
 class StorageRequirements:
     """Requisitos de storage calculados para um cenário."""
     
-    # Volumetria (TB)
-    storage_model_tb: float
-    storage_cache_tb: float
-    storage_logs_tb: float
-    storage_operational_tb: float
-    storage_total_tb: float
+    # Volumetria BASE (TB) - valores técnicos calculados
+    storage_model_base_tb: float
+    storage_cache_base_tb: float
+    storage_logs_base_tb: float
+    storage_operational_base_tb: float
+    storage_total_base_tb: float
+    
+    # Volumetria RECOMENDADA (TB) - valores estratégicos com margem
+    storage_model_recommended_tb: float
+    storage_cache_recommended_tb: float
+    storage_logs_recommended_tb: float
+    storage_operational_recommended_tb: float
+    storage_total_recommended_tb: float
+    
+    # Margem aplicada
+    margin_applied: bool
+    margin_percent: float
     
     # IOPS
     iops_read_peak: int
@@ -406,6 +417,7 @@ def calc_storage_requirements(
     sessions_per_node: int,
     weights_precision: str,
     replicas_per_node: int,
+    capacity_policy,  # CapacityPolicy instance
     scenario: str = "recomendado",
     retention_days: int = 30
 ) -> StorageRequirements:
@@ -421,44 +433,62 @@ def calc_storage_requirements(
         sessions_per_node: Sessões simultâneas por nó
         weights_precision: Precisão dos pesos
         replicas_per_node: Réplicas por nó
+        capacity_policy: Política de margem de capacidade
         scenario: "minimo", "recomendado" ou "ideal"
         retention_days: Dias de retenção de logs (sobrescrito por cenário)
     
     Returns:
         StorageRequirements com todos os cálculos e rationale
     """
-    # Calcular volumetria
-    storage_model_tb, rationale_model = calc_storage_model_tb(
+    # Calcular volumetria BASE (valores técnicos)
+    storage_model_base_tb, rationale_model = calc_storage_model_tb(
         model, weights_precision, num_nodes, replicas_per_node
     )
     
-    storage_cache_tb, rationale_cache = calc_storage_cache_tb(
+    storage_cache_base_tb, rationale_cache = calc_storage_cache_tb(
         num_nodes, sessions_per_node, scenario
     )
     
-    storage_logs_tb, rationale_logs = calc_storage_logs_tb(
+    storage_logs_base_tb, rationale_logs = calc_storage_logs_tb(
         concurrency, num_nodes, retention_days, scenario
     )
     
-    storage_operational_tb, rationale_operational = calc_storage_operational_tb(
+    storage_operational_base_tb, rationale_operational = calc_storage_operational_tb(
         num_nodes, scenario
     )
     
-    storage_total_tb = (
-        storage_model_tb + 
-        storage_cache_tb + 
-        storage_logs_tb + 
-        storage_operational_tb
+    storage_total_base_tb = (
+        storage_model_base_tb + 
+        storage_cache_base_tb + 
+        storage_logs_base_tb + 
+        storage_operational_base_tb
     )
     
-    # Calcular IOPS
+    # Aplicar margem de capacidade (valores estratégicos)
+    storage_model_recommended_tb = capacity_policy.apply_margin(
+        storage_model_base_tb, "storage_model"
+    )
+    storage_cache_recommended_tb = capacity_policy.apply_margin(
+        storage_cache_base_tb, "storage_cache"
+    )
+    storage_logs_recommended_tb = capacity_policy.apply_margin(
+        storage_logs_base_tb, "storage_logs"
+    )
+    storage_operational_recommended_tb = capacity_policy.apply_margin(
+        storage_operational_base_tb, "storage_operational"
+    )
+    storage_total_recommended_tb = capacity_policy.apply_margin(
+        storage_total_base_tb, "storage_total"
+    )
+    
+    # Calcular IOPS (baseado em valores recomendados para garantir margem)
     iops_dict, rationale_iops = calc_storage_iops(
-        concurrency, num_nodes, storage_model_tb, scenario
+        concurrency, num_nodes, storage_total_recommended_tb, scenario
     )
     
-    # Calcular Throughput
+    # Calcular Throughput (baseado em valores recomendados)
     throughput_dict, rationale_throughput = calc_storage_throughput(
-        concurrency, num_nodes, storage_model_tb, scenario
+        concurrency, num_nodes, storage_total_recommended_tb, scenario
     )
     
     # Consolidar rationale
@@ -470,24 +500,41 @@ def calc_storage_requirements(
         "storage_total": {
             "formula": "storage_total_tb = storage_model + storage_cache + storage_logs + storage_operational",
             "inputs": {
-                "storage_model_tb": round(storage_model_tb, 3),
-                "storage_cache_tb": round(storage_cache_tb, 3),
-                "storage_logs_tb": round(storage_logs_tb, 3),
-                "storage_operational_tb": round(storage_operational_tb, 3)
+                "storage_model_base_tb": round(storage_model_base_tb, 3),
+                "storage_cache_base_tb": round(storage_cache_base_tb, 3),
+                "storage_logs_base_tb": round(storage_logs_base_tb, 3),
+                "storage_operational_base_tb": round(storage_operational_base_tb, 3),
+                "storage_total_base_tb": round(storage_total_base_tb, 3)
             },
-            "assumption": f"Cenário {scenario}: soma de todos os componentes de storage",
-            "operational_meaning": f"Total de {storage_total_tb:.2f} TB necessário para operação estável. Subdimensionamento compromete resiliência e tempo de recuperação."
+            "assumption": f"Cenário {scenario}: soma de todos os componentes de storage. Margem de {capacity_policy.margin_percent*100:.0f}% aplicada conforme política de capacidade.",
+            "operational_meaning": f"Total BASE de {storage_total_base_tb:.2f} TB. Total RECOMENDADO de {storage_total_recommended_tb:.2f} TB com margem de {capacity_policy.margin_percent*100:.0f}% para crescimento, retenção adicional e resiliência. Subdimensionamento compromete tempo de recuperação."
+        },
+        "capacity_policy": {
+            "margin_percent": capacity_policy.margin_percent,
+            "source": capacity_policy.source,
+            "notes": capacity_policy.notes
         },
         "iops": rationale_iops,
         "throughput": rationale_throughput
     }
     
     return StorageRequirements(
-        storage_model_tb=storage_model_tb,
-        storage_cache_tb=storage_cache_tb,
-        storage_logs_tb=storage_logs_tb,
-        storage_operational_tb=storage_operational_tb,
-        storage_total_tb=storage_total_tb,
+        # Valores BASE
+        storage_model_base_tb=storage_model_base_tb,
+        storage_cache_base_tb=storage_cache_base_tb,
+        storage_logs_base_tb=storage_logs_base_tb,
+        storage_operational_base_tb=storage_operational_base_tb,
+        storage_total_base_tb=storage_total_base_tb,
+        # Valores RECOMENDADOS (com margem)
+        storage_model_recommended_tb=storage_model_recommended_tb,
+        storage_cache_recommended_tb=storage_cache_recommended_tb,
+        storage_logs_recommended_tb=storage_logs_recommended_tb,
+        storage_operational_recommended_tb=storage_operational_recommended_tb,
+        storage_total_recommended_tb=storage_total_recommended_tb,
+        # Margem aplicada
+        margin_applied=True,
+        margin_percent=capacity_policy.margin_percent,
+        # IOPS e Throughput
         iops_read_peak=iops_dict["iops_read_peak"],
         iops_write_peak=iops_dict["iops_write_peak"],
         iops_read_steady=iops_dict["iops_read_steady"],
