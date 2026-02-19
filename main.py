@@ -30,7 +30,8 @@ from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
 from sizing.calc_response_time import (
     calc_latency_analysis, calc_max_concurrency_from_slo,
-    has_performance_data, load_latency_benchmarks
+    has_performance_data, load_latency_benchmarks,
+    get_token_throughput, load_parameter
 )
 
 
@@ -117,18 +118,13 @@ def main():
         if config.sizing_mode == "slo_driven":
             print(f"[MODO B — SLO-DRIVEN] TTFT alvo: {config.ttft_input_ms}ms | TPOT alvo: {config.tpot_input_ms} tok/s")
 
-            # Validar range dos SLOs
+            # Validar range mínimo dos SLOs (limites superiores removidos:
+            # o sistema detecta inviabilidade física com base nos dados reais)
             if config.ttft_input_ms < 100:
                 print("ERRO: --ttft deve ser >= 100ms")
                 sys.exit(1)
-            if config.ttft_input_ms > 10000:
-                print("ERRO: --ttft deve ser <= 10000ms")
-                sys.exit(1)
             if config.tpot_input_ms < 1.0:
                 print("ERRO: --tpot deve ser >= 1.0 tokens/s")
-                sys.exit(1)
-            if config.tpot_input_ms > 200.0:
-                print("ERRO: --tpot deve ser <= 200.0 tokens/s")
                 sys.exit(1)
 
             if config.ttft_input_ms < ttft_excellent:
@@ -391,22 +387,130 @@ def main():
                 if scenarios[k].slo_capacity and not scenarios[k].slo_capacity.is_feasible
             ]
             if infeasible_scenarios:
-                # Se mesmo o ideal for inviável, é erro fatal
                 print("\n" + "=" * 80)
                 print("ERRO: SLOs FISICAMENTE INVIÁVEIS")
                 print("=" * 80)
-                for k in infeasible_scenarios:
-                    sc = scenarios[k].slo_capacity
-                    print(f"\n[{scenarios[k].config.name}] {sc.infeasibility_reason}")
-                print(
-                    "\nImpossível atender TTFT/TPOT com o modelo e servidor selecionados "
-                    "sob as premissas atuais.\n"
-                    "Ações possíveis:\n"
-                    "  - Reduza o contexto efetivo (--effective-context)\n"
-                    "  - Use um servidor de inferência com maior throughput de GPU\n"
-                    "  - Ajuste a quantização do modelo\n"
-                    "  - Aumente o SLO de TTFT (valor mais permissivo)\n"
-                )
+
+                # Mostrar causa raiz única (todos os cenários têm a mesma razão)
+                sc_ref = scenarios[infeasible_scenarios[0]].slo_capacity
+                print(f"\nCausa Raiz: {sc_ref.infeasibility_reason}")
+
+                # ── Calcular recomendações com números exatos ──────────────
+                import math as _math
+                prefill_thr, decode_thr, _, _ = get_token_throughput(model, server)
+                network_p50 = float(load_parameter('network_latency_p50_ms', 10))
+                avg_input = max(1, kv_result.effective_context_clamped // 2)
+                ttft_slo = config.ttft_input_ms
+                tpot_slo = config.tpot_input_ms
+                prefill_budget_ms = ttft_slo - network_p50
+
+                print("\n" + "-" * 80)
+                print("DIAGNÓSTICO")
+                print("-" * 80)
+                print(f"  Modelo:                  {model.name}")
+                print(f"  Servidor:                {server.name}")
+                print(f"  Contexto efetivo:        {kv_result.effective_context_clamped:,} tokens"
+                      f"  (avg. {avg_input:,} tokens de entrada/requisição)")
+                print(f"  Throughput prefill:      {prefill_thr:,.0f} tokens/s por servidor")
+                print(f"  Throughput decode:       {decode_thr:,.0f} tokens/s por servidor")
+                print(f"  Tempo de prefill:        {sc_ref.prefill_time_ms:,.0f} ms")
+                print(f"  Latência de rede (p50):  {network_p50:.0f} ms")
+                print(f"  SLO TTFT alvo:           {ttft_slo:,} ms")
+                print(f"  Budget para prefill:     {prefill_budget_ms:.0f} ms (TTFT - rede)")
+
+                print("\n" + "-" * 80)
+                print("AÇÕES POSSÍVEIS (com parâmetros calculados)")
+                print("-" * 80)
+
+                action = 1
+
+                # Ação 1: relaxar o SLO de TTFT
+                min_ttft = int(sc_ref.prefill_time_ms + network_p50) + 1
+                min_ttft_safe = int(min_ttft * 1.10)   # +10% de margem operacional
+                print(f"\n  {action}. Aumente o SLO de TTFT para o mínimo viável:")
+                print(f"     TTFT mínimo (sem fila): {min_ttft:,} ms")
+                print(f"     TTFT recomendado (+10% margem): {min_ttft_safe:,} ms")
+                print(f"     → Use: --ttft {min_ttft_safe}")
+                action += 1
+
+                # Ação 2: reduzir contexto efetivo
+                if prefill_budget_ms > 0:
+                    # Máximo teórico: usa 100% do budget de prefill (sem margem para fila)
+                    max_input_theoretical = int((prefill_budget_ms / 1000.0) * prefill_thr)
+                    # Recomendado: 85% do budget → deixa 15% para queuing delay
+                    max_input_recommended = int((prefill_budget_ms * 0.85 / 1000.0) * prefill_thr)
+                    rec_context = max(128, max_input_recommended * 2)
+                    pct_reduction = (1 - rec_context / kv_result.effective_context_clamped) * 100
+                    print(f"\n  {action}. Reduza o contexto efetivo:")
+                    print(f"     Budget de prefill disponível: {prefill_budget_ms:.0f} ms")
+                    print(f"     Máx. teórico (100% budget): {max_input_theoretical * 2:,} tokens  "
+                          f"(sem margem para fila — não recomendado)")
+                    print(f"     Máx. recomendado (85% budget): {rec_context:,} tokens  "
+                          f"(15% de margem para queuing)")
+                    print(f"     Redução necessária: {pct_reduction:.0f}% "
+                          f"(de {kv_result.effective_context_clamped:,} para {rec_context:,} tokens)")
+                    print(f"     → Use: --effective-context {rec_context}")
+                    action += 1
+
+                # Ação 3: modelo menor (comparar alternativas disponíveis)
+                # Verificar se há outros modelos no mesmo servidor que poderiam ser viáveis
+                alt_models = {
+                    "opt-oss-20b": 8000,    # prefill_tokens_per_sec_b300 de models.json
+                    "DeepSeek-V3.2": 1200,
+                }
+                viables = []
+                for alt_name, alt_prefill in alt_models.items():
+                    if alt_name == model.name:
+                        continue
+                    alt_prefill_time = (avg_input / alt_prefill) * 1000.0
+                    if prefill_budget_ms > 0 and alt_prefill_time <= prefill_budget_ms:
+                        max_ctx_alt = int((prefill_budget_ms / 1000.0) * alt_prefill * 2)
+                        viables.append((alt_name, alt_prefill, alt_prefill_time, max_ctx_alt, True))
+                    else:
+                        max_ctx_alt = int((prefill_budget_ms / 1000.0) * alt_prefill * 2) if prefill_budget_ms > 0 else 0
+                        min_ttft_alt = int((avg_input / alt_prefill) * 1000 + network_p50)
+                        viables.append((alt_name, alt_prefill, alt_prefill_time, max_ctx_alt, False))
+
+                has_viable_alt = any(v[4] for v in viables)
+                print(f"\n  {action}. Use um modelo com maior throughput de prefill:")
+                for alt_name, alt_prefill, alt_prefill_time, max_ctx_alt, is_ok in viables:
+                    if alt_name == model.name:
+                        continue
+                    status = "✓ VIÁVEL" if is_ok else f"× ainda inviável (prefill {alt_prefill_time:.0f}ms > {ttft_slo}ms)"
+                    print(f"     {alt_name}: {alt_prefill:,} tok/s prefill → prefill_time={alt_prefill_time:.0f}ms  [{status}]")
+                    if is_ok:
+                        print(f"       → Use: --model {alt_name}")
+                    elif prefill_budget_ms > 0 and alt_prefill > 0:
+                        max_ctx_safe = max(128, int((prefill_budget_ms * 0.85 / 1000.0) * alt_prefill * 2))
+                        print(f"       → Viável com contexto ≤ {max_ctx_safe:,} tokens: --model {alt_name} --effective-context {max_ctx_safe}")
+                action += 1
+
+                # Ação 4: throughput de prefill necessário
+                if prefill_budget_ms > 0:
+                    needed_thr = int(_math.ceil(avg_input / (prefill_budget_ms / 1000.0)))
+                    factor = needed_thr / prefill_thr
+                    print(f"\n  {action}. Use um servidor com maior throughput de prefill:")
+                    print(f"     Throughput necessário: {needed_thr:,} tokens/s  "
+                          f"(atual: {prefill_thr:,.0f} tok/s → fator {factor:.1f}×)")
+                    print(f"     → Substitua o servidor por hardware com prefill ≥ {needed_thr:,} tok/s")
+                    action += 1
+
+                # Ação 5: TPOT — limite de sessões por servidor
+                if tpot_slo and decode_thr > 0 and tpot_slo > 0:
+                    max_sess_tpot = max(1, int(decode_thr / tpot_slo))
+                    sessions_cap = scenarios['minimum'].vram.sessions_per_node
+                    print(f"\n  {action}. Limite de sessões simultâneas para atender TPOT ≥ {tpot_slo} tok/s:")
+                    print(f"     Decode throughput por servidor: {decode_thr:.0f} tok/s")
+                    print(f"     Sessões máximas/servidor para TPOT: {max_sess_tpot}")
+                    print(f"     Capacidade VRAM por servidor: {sessions_cap} sessões")
+                    if max_sess_tpot < sessions_cap:
+                        print(f"     → TPOT é o fator limitante: {max_sess_tpot} sessões/servidor "
+                              f"(VRAM suportaria {sessions_cap})")
+                    else:
+                        print(f"     → VRAM é o fator limitante: {sessions_cap} sessões/servidor")
+                    action += 1
+
+                print("\n" + "=" * 80)
                 print("Relatórios NÃO serão gerados.")
                 sys.exit(1)
 
