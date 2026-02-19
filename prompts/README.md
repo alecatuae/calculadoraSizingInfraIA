@@ -8,6 +8,10 @@ Este diretório contém prompts estruturados para desenvolvimento de funcionalid
 **Arquivo**: `analise_comparativa_modelos.md`  
 **Objetivo**: Gerar script Python que compara múltiplos relatórios de sizing e identifica o modelo mais eficiente em diferentes dimensões.
 
+### 2. Response Time SLO
+**Arquivo**: `response_time_slo.md`  
+**Objetivo**: Integrar validação de tempo de resposta (latência) no sistema de sizing, permitindo definir e validar SLOs de performance.
+
 **Principais funcionalidades**:
 - ✅ Ranking de eficiência de KV cache
 - ✅ Comparativo de infraestrutura (nós, VRAM, energia, rack)
@@ -26,6 +30,59 @@ Este diretório contém prompts estruturados para desenvolvimento de funcionalid
 **Exemplo de uso**:
 ```bash
 python analise_comparativa.py --models "DeepSeek-V3.2,opt-oss-120b" --scenario recommended
+```
+
+### 2. Response Time SLO
+**Arquivo**: `response_time_slo.md`  
+**Objetivo**: Integrar parâmetro `--responsetime` (em millisegundos) para validar se a infraestrutura consegue atender SLOs de latência.
+
+**Principais funcionalidades**:
+- ✅ Novo parâmetro `--responsetime` (tempo de resposta alvo em ms)
+- ✅ Cálculo de latência end-to-end (network + prefill + decode + queuing)
+- ✅ Breakdown detalhado de componentes de latência
+- ✅ Validação automática contra SLO definido (P50 e P99)
+- ✅ Identificação de gargalos (network, compute, queuing)
+- ✅ Recomendações acionáveis para atingir SLO
+- ✅ Alertas com impacto quantitativo
+- ✅ Nova seção em relatórios técnico e executivo
+- ✅ Integração com dados de performance em `models.json`
+
+**Casos de uso**:
+- Validar se infraestrutura atende requisitos de latência (ex: 200ms P50)
+- Identificar gargalos de performance (rede, compute, fila)
+- Dimensionar infraestrutura baseada em SLO de latência
+- Calcular quantos nós adicionais são necessários para atingir SLO
+- Comparar modelos por tempo de resposta esperado
+
+**Exemplo de uso**:
+```bash
+# Validar se consegue atender 1000 requisições com 200ms de resposta
+python main.py --model DeepSeek-V3.2 --server dgx-b300 \
+  --storage netapp_a_series --concurrency 1000 \
+  --effective-context 131072 --kv-precision fp8 \
+  --responsetime 200 --responsetime-p99 500
+```
+
+**Output esperado**:
+```
+⚠️  ALERTA: SLO de Response Time NÃO ATENDIDO [RECOMENDADO]
+
+📊 MÉTRICA: Response Time P50
+   • SLO definido: 200 ms
+   • Esperado: 225 ms
+   • Déficit: 25 ms (+12.5% acima do SLO)
+
+🔍 BREAKDOWN DE LATÊNCIA:
+   • Network Latency P50: 10 ms
+   • Prefill Time: 80 ms
+   • Decode Time: 120 ms
+   • Queuing Delay P50: 15 ms
+   • Utilização: 62.5%
+
+🎯 GARGALO IDENTIFICADO: DECODE_COMPUTE
+
+💡 AÇÃO RECOMENDADA:
+   Considerar modelo com decode mais rápido ou ajustar SLO para 250ms.
 ```
 
 ---
@@ -81,43 +138,43 @@ python analise_comparativa.py --models "DeepSeek-V3.2,opt-oss-120b" --scenario r
 
 Ideias para próximos prompts:
 
-### 2. Dashboard Web Interativo
+### 3. Dashboard Web Interativo
 - Interface web para visualizar relatórios de sizing
 - Filtros dinâmicos (modelo, servidor, cenário)
 - Gráficos comparativos (Chart.js)
 - Exportação de relatórios personalizados
 
-### 3. Benchmark de Latência Integrado
+### 4. Benchmark de Latência Integrado
 - Script para executar benchmarks de TTFT/TPOT
 - Integração com vLLM, TensorRT-LLM, TGI
 - Correlação entre sizing e performance real
 - Validação de premissas da calculadora
 
-### 4. CI/CD para Validação de Modelos
+### 5. CI/CD para Validação de Modelos
 - Pipeline automatizado para testar novos modelos
 - Validação de schema do `models.json`
 - Sizing automático em múltiplos servidores
 - Geração de relatório de compatibilidade
 
-### 5. Estimador de Custo Cloud
+### 6. Estimador de Custo Cloud
 - Tradução de sizing on-premise para cloud (AWS, GCP, Azure)
 - Comparação de custos entre provedores
 - Recomendação de instâncias (p5.48xlarge, etc.)
 - TCO on-prem vs cloud
 
-### 6. Otimizador de Configuração
+### 7. Otimizador de Configuração
 - Algoritmo para encontrar melhor combinação (TP, PP, batch, context)
 - Maximizar throughput ou minimizar latência
 - Considerar restrições de orçamento
 - Sugerir ajustes de `parameters.json`
 
-### 7. Gerador de Relatórios Executivos Personalizados
+### 8. Gerador de Relatórios Executivos Personalizados
 - Templates customizáveis por organização
 - Branded reports (logo, cores)
 - Seções opcionais (incluir/excluir métricas)
 - Exportação em PDF
 
-### 8. API REST para Sizing
+### 9. API REST para Sizing
 - Endpoint HTTP para sizing via API
 - Autenticação e rate limiting
 - Cache de resultados
