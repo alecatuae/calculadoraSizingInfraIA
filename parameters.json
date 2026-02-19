@@ -8,6 +8,8 @@
   ],
   "target_load_time_sec": 900.0,
 
+  "default_concurrency_slo_mode": 1000,
+
   "network_latency_p50_ms": 10,
   "network_latency_p99_ms": 50,
   "avg_output_tokens": 100,

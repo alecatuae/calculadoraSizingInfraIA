@@ -11,6 +11,32 @@ from .calc_storage import StorageRequirements
 
 
 @dataclass
+class SLOCapacityResult:
+    """Resultado do cálculo de capacidade máxima a partir de SLOs de latência."""
+    max_concurrency_from_ttft: int
+    max_concurrency_from_tpot: int
+    max_concurrency_combined: int
+    limiting_factor: str        # "TTFT" | "TPOT" | "BALANCED" | "NO_SLO"
+    util_max_from_ttft: float
+    sessions_per_node_max_from_tpot: int
+    prefill_time_ms: float
+    queuing_budget_ms: float
+    is_feasible: bool
+    infeasibility_reason: str
+
+
+@dataclass
+class CalibrationRecommendation:
+    """Recomendação de calibração para atender SLOs com a concorrência desejada."""
+    nodes_current: int
+    nodes_recommended: Optional[int]
+    max_concurrency_current_nodes: int
+    concurrency_requested: int
+    limiting_factor: str        # "TTFT" | "TPOT" | "BALANCED" | "INFEASIBLE"
+    extra_nodes_needed: int
+
+
+@dataclass
 class ScenarioConfig:
     """Configuração de um cenário."""
     name: str
@@ -52,8 +78,14 @@ class ScenarioResult:
     total_power_kw_with_storage: float = 0.0
     total_rack_u_with_storage: int = 0
     
-    # Análise de latência TTFT/TPOT (será preenchido por main se --ttft/--tpot)
+    # Análise de latência TTFT/TPOT (será preenchido por main)
     latency: Optional[object] = None
+
+    # Capacidade máxima por SLO (Modo SLO-Driven)
+    slo_capacity: Optional[SLOCapacityResult] = None
+
+    # Calibração recomendada (Modo Concorrência-Driven com violação)
+    calibration: Optional[CalibrationRecommendation] = None
 
 
 def create_scenario_configs(

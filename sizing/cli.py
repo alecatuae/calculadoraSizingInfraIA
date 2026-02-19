@@ -3,6 +3,7 @@ CLI: Define argumentos de linha de comando.
 """
 
 import argparse
+import json
 from dataclasses import dataclass
 from typing import Optional
 
@@ -45,10 +46,23 @@ class CLIConfig:
     ttft_p99: Optional[int]
     tpot: Optional[float]
     
+    # Modo de operação (detectado automaticamente)
+    sizing_mode: str  # "concurrency_driven" | "slo_driven"
+    
     # Outputs
     executive_report: bool
     verbose: bool
     validate_only: bool
+
+
+def _load_default_concurrency_slo_mode() -> int:
+    """Carrega default_concurrency_slo_mode de parameters.json com fallback."""
+    try:
+        with open('parameters.json', 'r', encoding='utf-8') as f:
+            params = json.load(f)
+            return int(params.get('default_concurrency_slo_mode', 1000))
+    except Exception:
+        return 1000
 
 
 def create_arg_parser() -> argparse.ArgumentParser:
@@ -63,8 +77,16 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server", help="Nome do servidor (ex: dgx-b300)")
     parser.add_argument("--storage", help="Nome do perfil de storage (ex: profile_default)")
     
-    # NFRs (obrigatórios exceto em --validate-only)
-    parser.add_argument("--concurrency", type=int, help="Sessões simultâneas alvo")
+    # NFRs
+    parser.add_argument(
+        "--concurrency", type=int, required=False,
+        help=(
+            "Sessões simultâneas alvo. "
+            "Obrigatório no Modo Concorrência-Driven (sem --ttft/--tpot). "
+            "Opcional no Modo SLO-Driven (com --ttft/--tpot): se omitido, usa "
+            "'default_concurrency_slo_mode' de parameters.json para dimensionar storage."
+        )
+    )
     parser.add_argument("--effective-context", type=int, help="Contexto efetivo em tokens")
     
     # NFRs opcionais
@@ -103,14 +125,14 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--capacity-margin", type=float,
                         help="Override da margem de capacidade de storage (0.0 a 1.0, ex: 0.30 = 30%%. Default: carregado de parameters.json)")
     parser.add_argument("--target-load-time", type=float,
-                        help="Tempo alvo (segundos) para carregar modelo no restart (default: 60s, definido em parameters.json)")
+                        help="Tempo alvo (segundos) para carregar modelo no restart (default: definido em parameters.json)")
     
     # SLOs de Latência LLM
     parser.add_argument(
         "--ttft", type=int, required=False,
         help="Time to First Token alvo em millisegundos (ms). Define o SLO de latência P50 até primeiro token. "
              "Exemplo: 1000 para 1s. Valores típicos: 500-2000ms. Bom: <500ms, Lento: >2000ms. "
-             "Se não especificado, não valida TTFT."
+             "Se não especificado, ativa o Modo Concorrência-Driven com SLOs implícitos de parameters.json."
     )
     parser.add_argument(
         "--ttft-p99", type=int, required=False,
@@ -120,7 +142,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
         "--tpot", type=float, required=False,
         help="Time Per Output Token (tokens/segundo) mínimo esperado. Define velocidade de streaming. "
              "Exemplo: 8.0 para 8 tokens/s. Valores típicos: 6-10 tokens/s. Bom: >10 tokens/s, Lento: <6 tokens/s. "
-             "Se não especificado, não valida throughput de geração."
+             "Se não especificado, ativa o Modo Concorrência-Driven com SLOs implícitos de parameters.json."
     )
     
     # Saídas
@@ -167,16 +189,34 @@ def parse_cli_args() -> CLIConfig:
             ttft=args.ttft,
             ttft_p99=args.ttft_p99,
             tpot=args.tpot,
+            sizing_mode="concurrency_driven",
             executive_report=args.executive_report,
             verbose=args.verbose,
             validate_only=True
         )
     
+    # Detectar modo de operação
+    slo_driven = (args.ttft is not None or args.tpot is not None)
+    sizing_mode = "slo_driven" if slo_driven else "concurrency_driven"
+    
+    # Validar: sem --ttft/--tpot, --concurrency é obrigatório
+    if not slo_driven and not args.concurrency:
+        parser.error(
+            "--concurrency é obrigatório no Modo Concorrência-Driven (quando --ttft e --tpot não são especificados).\n"
+            "Use --ttft e/ou --tpot para ativar o Modo SLO-Driven (calcula concorrência máxima automaticamente)."
+        )
+    
+    # No Modo SLO-Driven sem --concurrency: usar default de parameters.json para storage/físico
+    if slo_driven and not args.concurrency:
+        effective_concurrency = _load_default_concurrency_slo_mode()
+    else:
+        effective_concurrency = args.concurrency
+    
     return CLIConfig(
         model_name=args.model,
         server_name=args.server,
         storage_name=args.storage,
-        concurrency=args.concurrency,
+        concurrency=effective_concurrency,
         effective_context=args.effective_context,
         kv_precision=args.kv_precision,
         kv_budget_ratio=args.kv_budget_ratio,
@@ -196,7 +236,8 @@ def parse_cli_args() -> CLIConfig:
         ttft=args.ttft,
         ttft_p99=args.ttft_p99,
         tpot=args.tpot,
+        sizing_mode=sizing_mode,
         executive_report=args.executive_report,
         verbose=args.verbose,
-        validate_only=args.validate_only
+        validate_only=args.validate_only if args.validate_only else False
     )

@@ -126,7 +126,7 @@ def calc_vram(
     actual_tensor_parallel = tensor_parallel if tensor_parallel is not None else server.gpu.count
     if tensor_parallel is None:
         warnings.append(
-            f"ℹ️  --tensor-parallel não especificado. Assumindo TP = GPUs do servidor ({server.gpu.count})."
+            f"[INFO] --tensor-parallel nao especificado. Assumindo TP = GPUs do servidor ({server.gpu.count})."
         )
     
     gpus_per_replica = actual_tensor_parallel * pipeline_parallel

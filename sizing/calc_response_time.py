@@ -475,6 +475,105 @@ def calc_latency_analysis(
     )
 
 
+def calc_max_concurrency_from_slo(
+    model: ModelSpec,
+    server: ServerSpec,
+    num_nodes: int,
+    sessions_per_node: int,
+    target_ttft_p50_ms: Optional[int],
+    target_tpot_min_tokens_per_sec: Optional[float],
+    effective_context: int
+) -> 'SLOCapacityResult':
+    """
+    Sizing reverso: calcula a concorrência máxima atendível dado os SLOs.
+
+    Inversão da fórmula M/M/c para TTFT:
+      queuing_budget = TTFT_SLO - rede_p50 - prefill_time
+      util_max = queuing_budget / (service_time * qf_p50 + queuing_budget)
+      max_conc_ttft = floor(util_max * num_nodes * sessions_per_node)
+
+    Inversão de TPOT:
+      sess_max = floor(decode_thr / tpot_min)
+      max_conc_tpot = sess_max * num_nodes
+    """
+    from .calc_scenarios import SLOCapacityResult
+
+    network_p50 = float(load_parameter('network_latency_p50_ms', 10))
+    qf_p50 = float(load_parameter('queuing_factor_p50', 0.3))
+    max_util = float(load_parameter('max_utilization_threshold', 0.95))
+
+    prefill_thr, decode_thr, _, _ = get_token_throughput(model, server)
+
+    avg_input_tokens = max(1, effective_context // 2)
+    avg_output_tokens = int(load_parameter('avg_output_tokens', 100))
+
+    prefill_time_ms = (avg_input_tokens / prefill_thr) * 1000.0
+    decode_time_ms = (avg_output_tokens / decode_thr) * 1000.0
+    service_time = prefill_time_ms + decode_time_ms
+
+    # === LIMITE POR TTFT ===
+    queuing_budget_ms = 0.0
+    util_max_from_ttft = max_util
+    max_concurrency_from_ttft = int(max_util * num_nodes * sessions_per_node)
+    is_feasible = True
+    infeasibility_reason = ""
+
+    if target_ttft_p50_ms is not None:
+        queuing_budget_ms = float(target_ttft_p50_ms) - network_p50 - prefill_time_ms
+        if queuing_budget_ms <= 0:
+            is_feasible = False
+            min_feasible = network_p50 + prefill_time_ms * 1.05
+            infeasibility_reason = (
+                f"Prefill ({prefill_time_ms:.0f}ms) + rede ({network_p50:.0f}ms) = {prefill_time_ms+network_p50:.0f}ms "
+                f"ja excede o SLO de TTFT ({target_ttft_p50_ms}ms). "
+                f"TTFT minimo viavel: {min_feasible:.0f}ms. "
+                f"Reducao de contexto ou GPU com maior throughput de prefill sao necessarios."
+            )
+            util_max_from_ttft = 0.0
+            max_concurrency_from_ttft = 0
+        else:
+            denom = service_time * qf_p50 + queuing_budget_ms
+            util_max_from_ttft = min(queuing_budget_ms / denom, max_util) if denom > 0 else 0.0
+            max_concurrency_from_ttft = int(util_max_from_ttft * num_nodes * sessions_per_node)
+
+    # === LIMITE POR TPOT ===
+    sessions_per_node_max_from_tpot = sessions_per_node
+    max_concurrency_from_tpot = num_nodes * sessions_per_node
+
+    if target_tpot_min_tokens_per_sec is not None and target_tpot_min_tokens_per_sec > 0:
+        sessions_per_node_max_from_tpot = max(1, int(decode_thr / target_tpot_min_tokens_per_sec))
+        max_concurrency_from_tpot = sessions_per_node_max_from_tpot * num_nodes
+
+    # === GARGALO ===
+    max_concurrency_combined = min(max_concurrency_from_ttft, max_concurrency_from_tpot)
+
+    if target_ttft_p50_ms is None and target_tpot_min_tokens_per_sec is None:
+        limiting_factor = "NO_SLO"
+    elif target_ttft_p50_ms is None:
+        limiting_factor = "TPOT"
+    elif target_tpot_min_tokens_per_sec is None:
+        limiting_factor = "TTFT"
+    elif max_concurrency_from_ttft < max_concurrency_from_tpot:
+        limiting_factor = "TTFT"
+    elif max_concurrency_from_tpot < max_concurrency_from_ttft:
+        limiting_factor = "TPOT"
+    else:
+        limiting_factor = "BALANCED"
+
+    return SLOCapacityResult(
+        max_concurrency_from_ttft=max_concurrency_from_ttft,
+        max_concurrency_from_tpot=max_concurrency_from_tpot,
+        max_concurrency_combined=max_concurrency_combined,
+        limiting_factor=limiting_factor,
+        util_max_from_ttft=util_max_from_ttft,
+        sessions_per_node_max_from_tpot=sessions_per_node_max_from_tpot,
+        prefill_time_ms=prefill_time_ms,
+        queuing_budget_ms=queuing_budget_ms,
+        is_feasible=is_feasible,
+        infeasibility_reason=infeasibility_reason
+    )
+
+
 def latency_analysis_to_dict(la: Optional['LatencyAnalysis']) -> Optional[Dict[str, Any]]:
     """Converte LatencyAnalysis para dict serializável em JSON."""
     if la is None:
