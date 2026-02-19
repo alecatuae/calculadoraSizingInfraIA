@@ -19,28 +19,31 @@ def format_full_report(
     effective_context: int,
     kv_precision: str,
     warnings: List[str],
-    sizing_mode: str = "concurrency_driven"
+    sizing_mode: str = "concurrency_driven",
+    ttft_input_ms: Optional[int] = None,
+    tpot_input_ms: Optional[float] = None,
+    concurrency_input: Optional[int] = None,
 ) -> str:
     """
     Gera relatório completo em texto.
-    
+
     Returns:
         String com relatório formatado
     """
     lines = []
-    
+
     # Cabeçalho
     lines.append("=" * 100)
-    lines.append("RELATÓRIO COMPLETO DE SIZING - INFRAESTRUTURA PARA INFERÊNCIA")
+    lines.append("RELATÓRIO COMPLETO DE SIZING — INFRAESTRUTURA PARA INFERÊNCIA")
     lines.append("=" * 100)
     lines.append("")
-    
-    # Seção 1: Entradas
+
+    # ── Seção 1: Entradas ─────────────────────────────────────────────────────
     lines.append("┌" + "─" * 98 + "┐")
     lines.append("│" + " SEÇÃO 1: ENTRADAS".ljust(98) + "│")
     lines.append("└" + "─" * 98 + "┘")
     lines.append("")
-    
+
     lines.append(f"Modelo: {model.name}")
     lines.append(f"  • Camadas: {model.num_layers}")
     lines.append(f"  • KV Heads: {model.num_key_value_heads}")
@@ -48,8 +51,8 @@ def format_full_report(
     lines.append(f"  • Max Context: {model.max_position_embeddings:,}")
     lines.append(f"  • Attention Pattern: {model.attention_pattern}")
     lines.append("")
-    
-    lines.append(f"Servidor: {server.name}")
+
+    lines.append(f"Servidor de Inferencia: {server.name}")
     lines.append(f"  • GPUs: {server.gpu.count}")
     lines.append(f"  • HBM per GPU: {server.gpu.hbm_per_gpu_gb} GB")
     lines.append(f"  • HBM Total: {server.total_hbm_gib:.1f} GiB")
@@ -58,12 +61,59 @@ def format_full_report(
     if server.rack_units_u:
         lines.append(f"  • Rack: {server.rack_units_u}U")
     lines.append("")
-    
-    modo_label = "SLO-Driven (latencia guia dimensionamento)" if sizing_mode == "slo_driven" else "Concorrencia-Driven (SLOs implicitos de parameters.json)"
-    lines.append(f"Modo de Sizing: {modo_label}")
-    lines.append(f"Concorrencia Alvo: {concurrency:,} sessoes")
+
+    if sizing_mode == "slo_driven":
+        modo_label = f"MODO B — Sizing por SLO (TTFT={ttft_input_ms}ms / TPOT={tpot_input_ms} tok/s)"
+        lines.append(f"Modo de Sizing: {modo_label}")
+        lines.append(f"TTFT alvo: {ttft_input_ms} ms")
+        lines.append(f"TPOT alvo: {tpot_input_ms} tok/s")
+    else:
+        modo_label = f"MODO A — Sizing por Concorrencia ({concurrency_input:,} sessoes)"
+        lines.append(f"Modo de Sizing: {modo_label}")
+        lines.append(f"Concorrencia Alvo: {concurrency_input:,} sessoes")
     lines.append(f"Contexto Efetivo: {effective_context:,} tokens")
     lines.append(f"Precisao KV: {kv_precision}")
+    lines.append("")
+
+    # ── Seção 1.5: Parâmetros de Demanda e SLO ────────────────────────────────
+    lines.append("┌" + "─" * 98 + "┐")
+    lines.append("│" + " SEÇÃO 1.5: PARÂMETROS DE DEMANDA E SLO".ljust(98) + "│")
+    lines.append("└" + "─" * 98 + "┘")
+    lines.append("")
+    lines.append("DEFINIÇÕES:")
+    lines.append("  • Concorrência: número de requisições/sessões simultâneas atendidas pelo sistema.")
+    lines.append("    Determina capacidade operacional e dimensionamento de hardware.")
+    lines.append("  • TTFT (Time To First Token): tempo até o primeiro token ser entregue (rede + fila + prefill).")
+    lines.append("    Define a percepção de responsividade do usuário.")
+    lines.append("  • TPOT (Time Per Output Token): velocidade de geração contínua (tokens/segundo).")
+    lines.append("    Define a fluidez do streaming — TPOT baixo torna o streaming truncado.")
+    lines.append("")
+
+    rec = scenarios["recommended"]
+    rec_la = rec.latency
+    rec_sc = rec.slo_capacity
+
+    lines.append(f"{'Parâmetro':<28} {'Entrada':<22} {'Resultado (Recomendado)':<26} {'Observação'}")
+    lines.append("-" * 100)
+
+    def _ttft_r(la_obj):
+        if la_obj is None:
+            return "N/A"
+        return f"{la_obj.ttft_p50_ms:.0f} ms" if la_obj.ttft_p50_ms < 99000 else "inf (saturado)"
+
+    if sizing_mode == "slo_driven":
+        conc_final = rec_sc.max_concurrency_combined if rec_sc and rec_sc.is_feasible else 0
+        ttft_result = _ttft_r(rec_la)
+        tpot_result = f"{rec_la.tpot_tokens_per_sec:.1f} tok/s" if rec_la else "N/A"
+        lines.append(f"{'Concorrência':<28} {'— (calculado)':<22} {str(conc_final) + ' sessões':<26} Capacidade dentro dos SLOs")
+        lines.append(f"{'TTFT P50':<28} {str(ttft_input_ms) + ' ms':<22} {ttft_result:<26} Tempo até o primeiro token")
+        lines.append(f"{'TPOT':<28} {str(tpot_input_ms) + ' tok/s':<22} {tpot_result:<26} Velocidade de geração por sessão")
+    else:
+        ttft_result = _ttft_r(rec_la)
+        tpot_result = f"{rec_la.tpot_tokens_per_sec:.1f} tok/s" if rec_la else "N/A"
+        lines.append(f"{'Concorrência':<28} {str(concurrency_input) + ' sessões':<22} {str(concurrency_input) + ' sessões':<26} Dimensionado para esta concorrência")
+        lines.append(f"{'TTFT P50':<28} {'— (estimado)':<22} {ttft_result:<26} Estimativa para cenário recomendado")
+        lines.append(f"{'TPOT':<28} {'— (estimado)':<22} {tpot_result:<26} Estimativa para cenário recomendado")
     lines.append("")
     
     # Seção 2: Consumo Real de VRAM
@@ -199,7 +249,7 @@ def format_full_report(
     lines.append(platform_rationale.get("operational_meaning", "Volume estrutural fixo da plataforma de IA."))
     lines.append("")
     
-    # Seção 2.8: Análise de Latência (TTFT/TPOT) - apenas se SLOs foram definidos
+    # Seção 2.8: Análise de Latência (TTFT/TPOT) — sempre presente
     any_latency = any(scenarios[k].latency is not None for k in scenarios)
     if any_latency:
         lines.append("┌" + "─" * 98 + "┐")
@@ -212,13 +262,15 @@ def format_full_report(
         from .calc_response_time import load_latency_benchmarks
         benchmarks = load_latency_benchmarks()
 
-        lines.append("SLO Definido:")
-        if first_la.target_ttft_p50_ms:
+        if sizing_mode == "slo_driven" and first_la.target_ttft_p50_ms:
+            lines.append("SLO Definido (Modo B):")
             lines.append(f"  • TTFT P50: {first_la.target_ttft_p50_ms} ms ({first_la.target_ttft_p50_ms/1000:.1f}s)")
-        if first_la.target_ttft_p99_ms:
-            lines.append(f"  • TTFT P99: {first_la.target_ttft_p99_ms} ms ({first_la.target_ttft_p99_ms/1000:.1f}s)")
-        if first_la.target_tpot_tokens_per_sec:
-            lines.append(f"  • TPOT mínimo: {first_la.target_tpot_tokens_per_sec:.1f} tokens/segundo")
+            if first_la.target_ttft_p99_ms:
+                lines.append(f"  • TTFT P99: {first_la.target_ttft_p99_ms} ms")
+            if first_la.target_tpot_tokens_per_sec:
+                lines.append(f"  • TPOT mínimo: {first_la.target_tpot_tokens_per_sec:.1f} tokens/segundo")
+        else:
+            lines.append("Modo A — Latências estimadas (sem SLO definido):")
         lines.append("")
 
         lines.append("Premissas:")
@@ -274,42 +326,55 @@ def format_full_report(
             lines.append(f"  - {'─'*29}")
             if la.target_ttft_p50_ms:
                 slo_tag = '[OK]' if la.ttft_p50_ok else '[VIOLADO]'
-                margin_txt = f"+{abs(la.ttft_p50_margin_percent):.1f}% margem" if la.ttft_p50_ok else f"+{abs(la.ttft_p50_margin_percent):.1f}% acima do SLO"
+                margin_txt = (
+                    f"+{abs(la.ttft_p50_margin_percent):.1f}% margem"
+                    if la.ttft_p50_ok else f"+{abs(la.ttft_p50_margin_percent):.1f}% acima do SLO"
+                )
                 lines.append(f"  - TTFT P50:             {la.ttft_p50_ms:>8.0f} ms  {slo_tag} {margin_txt}")
             else:
-                lines.append(f"  - TTFT P50:             {la.ttft_p50_ms:>8.0f} ms  (sem SLO definido)")
+                lines.append(f"  - TTFT P50:             {la.ttft_p50_ms:>8.0f} ms  (estimado)")
             if la.target_ttft_p99_ms:
                 slo_tag = '[OK]' if la.ttft_p99_ok else '[VIOLADO]'
                 lines.append(f"  - TTFT P99:             {la.ttft_p99_ms:>8.0f} ms  {slo_tag} (SLO: {la.target_ttft_p99_ms}ms)")
             lines.append("")
-            lines.append(f"Status TTFT: {'[OK] SLO ATENDIDO' if la.ttft_p50_ok else '[VIOLADO] SLO NAO ATENDIDO'}")
-            lines.append(f"Classificacao TTFT: {qual_label.get(la.ttft_quality, la.ttft_quality.upper())} -- {_ttft_qual_desc(la.ttft_quality, benchmarks)}")
+            if la.status == 'NO_SLO':
+                lines.append(f"TTFT Estimado: {la.ttft_p50_ms:.0f} ms (Modo A — sem SLO definido)")
+            else:
+                lines.append(f"Status TTFT: {'[OK] SLO ATENDIDO' if la.ttft_p50_ok else '[VIOLADO] SLO NAO ATENDIDO'}")
+            lines.append(f"Classificacao TTFT: {qual_label.get(la.ttft_quality, la.ttft_quality.upper())} — {_ttft_qual_desc(la.ttft_quality, benchmarks)}")
             lines.append("")
 
             # TPOT
             lines.append("TPOT (Time Per Output Token):")
-            lines.append(f"  - Throughput decode (no):  {la.decode_throughput:>8.0f} tokens/s")
-            lines.append(f"  - Sessoes ativas por no:   {scenarios[key].sessions_per_node_effective:>8} (efetivas)")
+            lines.append(f"  - Throughput decode (servidor): {la.decode_throughput:>8.0f} tokens/s")
+            lines.append(f"  - Sessoes ativas por servidor:  {scenarios[key].sessions_per_node_effective:>8} (efetivas)")
             lines.append(f"  - {'─'*35}")
             if la.target_tpot_tokens_per_sec:
                 slo_tag = '[OK]' if la.tpot_ok else '[VIOLADO]'
-                margin_txt = f"+{abs(la.tpot_margin_percent):.1f}% acima do minimo" if la.tpot_ok else f"{abs(la.tpot_margin_percent):.1f}% abaixo do SLO"
-                lines.append(f"  - TPOT por sessao:         {la.tpot_tokens_per_sec:>8.2f} tok/s  {slo_tag} {margin_txt}")
+                margin_txt = (
+                    f"+{abs(la.tpot_margin_percent):.1f}% acima do minimo"
+                    if la.tpot_ok else f"{abs(la.tpot_margin_percent):.1f}% abaixo do SLO"
+                )
+                lines.append(f"  - TPOT por sessao:              {la.tpot_tokens_per_sec:>8.2f} tok/s  {slo_tag} {margin_txt}")
             else:
-                lines.append(f"  - TPOT por sessao:         {la.tpot_tokens_per_sec:>8.2f} tok/s  (sem SLO definido)")
-            lines.append(f"  - ITL (ms/token):          {la.itl_ms_per_token:>8.0f} ms/token")
+                lines.append(f"  - TPOT por sessao:              {la.tpot_tokens_per_sec:>8.2f} tok/s  (estimado)")
+            lines.append(f"  - ITL (ms/token):               {la.itl_ms_per_token:>8.0f} ms/token")
             lines.append("")
-            lines.append(f"Status TPOT: {'[OK] SLO ATENDIDO' if la.tpot_ok else '[VIOLADO] SLO NAO ATENDIDO'}")
-            lines.append(f"Classificacao TPOT: {qual_label.get(la.tpot_quality, la.tpot_quality.upper())} -- {_tpot_qual_desc(la.tpot_quality, benchmarks)}")
+            if la.status == 'NO_SLO':
+                lines.append(f"TPOT Estimado: {la.tpot_tokens_per_sec:.2f} tok/s (Modo A — sem SLO definido)")
+            else:
+                lines.append(f"Status TPOT: {'[OK] SLO ATENDIDO' if la.tpot_ok else '[VIOLADO] SLO NAO ATENDIDO'}")
+            lines.append(f"Classificacao TPOT: {qual_label.get(la.tpot_quality, la.tpot_quality.upper())} — {_tpot_qual_desc(la.tpot_quality, benchmarks)}")
             lines.append("")
 
             lines.append(f"Utilização: {la.utilization*100:.1f}% ({util_label(la.utilization)})")
             lines.append(f"Gargalo Principal: {la.bottleneck}")
             lines.append("")
-            lines.append(f"Recomendação:")
-            for rec_line in la.recommendation.split('\n'):
-                lines.append(f"  {rec_line}")
-            lines.append("")
+            if la.recommendation:
+                lines.append("Diagnóstico:")
+                for rec_line in la.recommendation.split('\n'):
+                    lines.append(f"  {rec_line}")
+                lines.append("")
 
         # Racional de cálculo TTFT/TPOT
         lines.append("═" * 84)
@@ -331,52 +396,41 @@ def format_full_report(
         lines.append(f"{'Benchmarks':<30} {'latency_benchmarks.*':<35} {'parameters.json':<35}")
         lines.append("")
 
-    # Seção 2.9: Capacidade Máxima por SLO / Calibração
+    # Seção 2.9: Capacidade Máxima por SLO (Modo B)
     any_slo_capacity = any(scenarios[k].slo_capacity is not None for k in scenarios)
-    any_calibration = any(scenarios[k].calibration is not None for k in scenarios)
 
-    if any_slo_capacity:
+    if any_slo_capacity and sizing_mode == "slo_driven":
         lines.append("┌" + "─" * 98 + "┐")
-        if sizing_mode == "slo_driven":
-            lines.append("│" + " SECAO 2.9: CAPACIDADE MAXIMA POR SLO DE LATENCIA (MODO SLO-DRIVEN)".ljust(98) + "│")
-        else:
-            lines.append("│" + " SECAO 2.9: CALIBRACAO RECOMENDADA (SLOs IMPLICITOS)".ljust(98) + "│")
+        lines.append("│" + " SEÇÃO 2.9: CONCORRÊNCIA MÁXIMA POR SLO DE LATÊNCIA (MODO B)".ljust(98) + "│")
         lines.append("└" + "─" * 98 + "┘")
         lines.append("")
 
         first_slo = next(scenarios[k].slo_capacity for k in scenarios if scenarios[k].slo_capacity)
-        lines.append("FORMULA (SIZING REVERSO):")
-        lines.append(f"  queuing_budget = TTFT_SLO - rede_p50 - prefill_time")
-        lines.append(f"  util_max       = queuing_budget / (service_time x qf_p50 + queuing_budget)")
-        lines.append(f"  max_conc_TTFT  = floor(util_max x num_nos x sessoes/no)")
-        lines.append(f"  sess_max/no    = floor(decode_thr / TPOT_min)")
-        lines.append(f"  max_conc_TPOT  = sess_max/no x num_nos")
-        lines.append(f"  max_conc       = min(max_conc_TTFT, max_conc_TPOT)")
+        lines.append("FÓRMULA (SIZING REVERSO — Modo B):")
+        lines.append("  queuing_budget = TTFT_SLO - rede_p50 - prefill_time")
+        lines.append("  util_max       = queuing_budget / (service_time × qf_p50 + queuing_budget)")
+        lines.append("  max_conc_TTFT  = floor(util_max × num_servidores × sessoes/servidor)")
+        lines.append("  sess_max/srv   = floor(decode_thr / TPOT_min)")
+        lines.append("  max_conc_TPOT  = sess_max/srv × num_servidores")
+        lines.append("  max_conc       = min(max_conc_TTFT, max_conc_TPOT)")
         lines.append("")
         lines.append(f"  Prefill time calculado: {first_slo.prefill_time_ms:.0f} ms")
         lines.append("")
 
-        lines.append(f"{'Cenario':<18} {'Max TTFT (sess)':<18} {'Max TPOT (sess)':<18} {'Max Final (sess)':<18} {'Gargalo':<12} {'Viavel?':<10}")
+        lines.append(
+            f"{'Cenario':<18} {'Servidores':<12} {'Max TTFT (sess)':<18} "
+            f"{'Max TPOT (sess)':<18} {'Concorr. Final':<16} {'Gargalo':<12}"
+        )
         lines.append("-" * 94)
         for k in ["minimum", "recommended", "ideal"]:
             sc = scenarios[k].slo_capacity
             if sc:
-                viavel = "Sim" if sc.is_feasible else "Nao"
-                lines.append(f"{scenarios[k].config.name:<18} {sc.max_concurrency_from_ttft:<18} {sc.max_concurrency_from_tpot:<18} {sc.max_concurrency_combined:<18} {sc.limiting_factor:<12} {viavel:<10}")
+                lines.append(
+                    f"{scenarios[k].config.name:<18} {scenarios[k].nodes_final:<12} "
+                    f"{sc.max_concurrency_from_ttft:<18} {sc.max_concurrency_from_tpot:<18} "
+                    f"{sc.max_concurrency_combined:<16} {sc.limiting_factor:<12}"
+                )
         lines.append("")
-
-        if any_calibration or sizing_mode == "concurrency_driven":
-            lines.append("CALIBRACAO RECOMENDADA:")
-            lines.append(f"{'Cenario':<18} {'Solicitado':<14} {'Max c/SLOs':<14} {'Nos Atuais':<12} {'Nos Recom.':<12} {'Nos Extras':<12}")
-            lines.append("-" * 82)
-            for k in ["minimum", "recommended", "ideal"]:
-                cal = scenarios[k].calibration
-                sc = scenarios[k].slo_capacity
-                if sc:
-                    nodes_rec = cal.nodes_recommended if cal else scenarios[k].nodes_final
-                    extra = cal.extra_nodes_needed if cal else 0
-                    lines.append(f"{scenarios[k].config.name:<18} {scenarios[k].calibration.concurrency_requested if cal else 'N/A':<14} {sc.max_concurrency_combined:<14} {scenarios[k].nodes_final:<12} {nodes_rec or 'N/A':<12} {extra:<12}")
-            lines.append("")
 
     # Seção 3: Resultados por Cenário
     lines.append("┌" + "─" * 98 + "┐")
@@ -391,10 +445,10 @@ def format_full_report(
         lines.append("=" * 100)
         lines.append("")
         lines.append("COMPUTAÇÃO:")
-        lines.append(f"  • Nós DGX: {s.nodes_final}")
-        lines.append(f"  • Sessões por nó (capacidade): {s.vram.sessions_per_node}")
-        lines.append(f"  • Sessões por nó (operando): {s.sessions_per_node_effective}")
-        lines.append(f"  • VRAM por nó (efetiva): {s.vram_total_node_effective_gib:.1f} GiB ({s.hbm_utilization_ratio_effective*100:.1f}% HBM)")
+        lines.append(f"  • Servidores de Inferência: {s.nodes_final}")
+        lines.append(f"  • Sessões por servidor (capacidade): {s.vram.sessions_per_node}")
+        lines.append(f"  • Sessões por servidor (operando): {s.sessions_per_node_effective}")
+        lines.append(f"  • VRAM por servidor (efetiva): {s.vram_total_node_effective_gib:.1f} GiB ({s.hbm_utilization_ratio_effective*100:.1f}% HBM)")
         lines.append("")
         
         if s.storage:
@@ -477,7 +531,10 @@ def format_json_report(
     effective_context: int,
     kv_precision: str,
     warnings: List[str],
-    sizing_mode: str = "concurrency_driven"
+    sizing_mode: str = "concurrency_driven",
+    ttft_input_ms: Optional[int] = None,
+    tpot_input_ms: Optional[float] = None,
+    concurrency_input: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Gera relatório completo em formato JSON.
@@ -569,18 +626,6 @@ def format_json_report(
                 "infeasibility_reason": sc.infeasibility_reason
             }
 
-        # Adicionar calibração se disponível
-        if s.calibration is not None:
-            cal = s.calibration
-            result["calibration"] = {
-                "nodes_current": cal.nodes_current,
-                "nodes_recommended": cal.nodes_recommended,
-                "max_concurrency_current_nodes": cal.max_concurrency_current_nodes,
-                "concurrency_requested": cal.concurrency_requested,
-                "limiting_factor": cal.limiting_factor,
-                "extra_nodes_needed": cal.extra_nodes_needed
-            }
-
         return result
     
     return {
@@ -588,10 +633,13 @@ def format_json_report(
             "model": model.name,
             "server": server.name,
             "storage": storage.name,
-            "concurrency": concurrency,
+            "sizing_mode": sizing_mode,
+            "concurrency_planning": concurrency,
+            "concurrency_input": concurrency_input,
+            "ttft_input_ms": ttft_input_ms,
+            "tpot_input_ms": tpot_input_ms,
             "effective_context": effective_context,
-            "kv_precision": kv_precision,
-            "sizing_mode": sizing_mode
+            "kv_precision": kv_precision
         },
         "storage_profile": {
             "name": storage.name,

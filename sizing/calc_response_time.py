@@ -280,43 +280,37 @@ def generate_recommendation(
     ttft_p50_ms: Optional[float],
     target_ttft_p50: Optional[int]
 ) -> str:
-    """Gera recomendação acionável baseada no status e gargalo."""
-    if status == 'OK':
-        return '✅ Sistema atende os SLOs definidos com margem adequada.'
+    """Gera diagnóstico de gargalo baseado no status e bottleneck."""
+    if status in ('OK', 'SLO_MARGINAL', 'NO_SLO'):
+        return ''
 
     lines = []
 
     if 'QUEUING_DELAY' in bottleneck:
-        target_util = load_parameter('target_utilization_recommended', 0.70)
-        current_sessions = int(num_nodes * sessions_per_node * utilization)
-        target_sessions = int(num_nodes * sessions_per_node * target_util)
-        nodes_needed = math.ceil(current_sessions / (sessions_per_node * target_util))
-        extra_nodes = max(0, nodes_needed - num_nodes)
-        lines.append(f"   1. Adicionar {extra_nodes} nó(s) DGX para reduzir utilização para ~{target_util*100:.0f}%")
-        lines.append(f"      (atual: {utilization*100:.1f}% → alvo: {target_util*100:.0f}%)")
-        lines.append(f"   2. Alternativa: reduzir concorrência alvo de {current_sessions} para {target_sessions} sessões")
-
+        lines.append(
+            f"SLO inviável com a configuração atual: sistema saturado ({utilization*100:.1f}% utilização). "
+            f"Impossível atender TTFT/TPOT com o modelo e servidor selecionados sob as premissas atuais. "
+            f"Reduza contexto, reduza concorrência, use mais servidores de inferência ou ajuste quantização."
+        )
     elif 'PREFILL_COMPUTE' in bottleneck or 'PREFILL_MODERATE' in bottleneck:
-        lines.append("   1. Considerar GPU de geração mais recente (maior throughput de prefill)")
-        lines.append("   2. Ativar otimizações: Flash Attention v3, chunked prefill")
-        lines.append("   3. Reduzir contexto efetivo se possível")
-        if ttft_p50_ms and target_ttft_p50:
-            lines.append(f"   4. Alternativa: ajustar SLO de TTFT para {int(ttft_p50_ms * 1.2)}ms (realista para este hardware)")
-
+        min_feasible = (ttft_p50_ms or 0) * 1.05
+        lines.append(
+            f"Tempo de prefill ({ttft_p50_ms:.0f}ms) domina a latência. "
+            f"TTFT mínimo viável estimado: {min_feasible:.0f}ms. "
+            f"Impossível atender TTFT/TPOT com o modelo e servidor selecionados sob as premissas atuais. "
+            f"Reduza contexto, use servidor com maior throughput de prefill ou ajuste quantização."
+        )
     elif 'DECODE_THROUGHPUT' in bottleneck:
-        if target_tpot and tpot_tokens_per_sec > 0:
-            sessions_for_slo = int(
-                (tpot_tokens_per_sec * sessions_per_node) / target_tpot
-            )
-            lines.append(f"   1. GPU não tem decode throughput suficiente para todas as sessões paralelas")
-            lines.append(f"      Para atingir {target_tpot} tok/s, suporte máximo: ~{sessions_for_slo} sessões (vs {sessions_per_node} atuais)")
-            lines.append(f"   2. Alternativa: ajustar SLO de TPOT para {tpot_tokens_per_sec:.1f} tok/s (realista para este hardware)")
-        lines.append("   3. Considerar GPU com maior throughput de decode (ex: B300 vs H100)")
-        lines.append("   4. Avaliar especulative decoding ou modelos draft")
-
-    if not lines:
-        lines.append("   1. Revisar configuração de TP/PP para otimizar utilização de NVLink")
-        lines.append("   2. Verificar batch size e otimizações do serving framework")
+        lines.append(
+            f"Throughput de decode insuficiente ({tpot_tokens_per_sec:.2f} tok/s). "
+            f"Impossível atender TTFT/TPOT com o modelo e servidor selecionados sob as premissas atuais. "
+            f"Reduza concorrência por nó, use servidor com maior throughput de decode ou ajuste quantização."
+        )
+    else:
+        lines.append(
+            "Impossível atender TTFT/TPOT com o modelo e servidor selecionados sob as premissas atuais. "
+            "Verifique configuração de paralelismo e otimizações do serving framework."
+        )
 
     return '\n'.join(lines)
 
@@ -335,11 +329,12 @@ def calc_latency_analysis(
     target_ttft_p99_ms: Optional[int],
     target_tpot_min_tokens_per_sec: Optional[float],
     effective_context: int
-) -> Optional['LatencyAnalysis']:
+) -> 'LatencyAnalysis':
     """
     Calcula TTFT e TPOT esperados e valida contra SLOs.
 
-    Retorna None se nenhum SLO for definido (feature desabilitada).
+    Quando targets são None (Modo A - Concorrência-Driven), retorna estimativas
+    sem validação de SLO (status = 'NO_SLO').
 
     Parâmetros de cálculo lidos de parameters.json:
       - network_latency_p50_ms, network_latency_p99_ms
@@ -348,8 +343,6 @@ def calc_latency_analysis(
       - queuing_factor_p50, queuing_factor_p99
       - latency_benchmarks (para classificação)
     """
-    if target_ttft_p50_ms is None and target_tpot_min_tokens_per_sec is None:
-        return None
 
     # -- Carregar parâmetros de parameters.json ----------------------------
     network_p50 = float(load_parameter('network_latency_p50_ms', 10))
@@ -395,13 +388,15 @@ def calc_latency_analysis(
     ttft_p50 = network_p50 + queuing_p50 + prefill_time_ms
     ttft_p99 = network_p99 + queuing_p99 + (prefill_time_ms * 1.2)
 
-    # -- Validação SLO -----------------------------------------------------
+    # -- Validação SLO (apenas Modo B) -------------------------------------
     ttft_p50_ok = True
     ttft_p99_ok = True
     tpot_ok = True
     ttft_p50_margin = 0.0
     ttft_p99_margin = 0.0
     tpot_margin = 0.0
+
+    no_slo = target_ttft_p50_ms is None and target_tpot_min_tokens_per_sec is None
 
     if target_ttft_p50_ms is not None:
         ttft_p50_ok = ttft_p50 <= target_ttft_p50_ms
@@ -416,15 +411,17 @@ def calc_latency_analysis(
         tpot_margin = ((tpot_tokens_per_sec - target_tpot_min_tokens_per_sec) /
                        target_tpot_min_tokens_per_sec) * 100
 
-    all_ok = ttft_p50_ok and ttft_p99_ok and tpot_ok
-    min_margin = min(ttft_p50_margin, ttft_p99_margin, tpot_margin)
-
-    if all_ok and min_margin > 10:
-        status = 'OK'
-    elif all_ok:
-        status = 'SLO_MARGINAL'
+    if no_slo:
+        status = 'NO_SLO'
     else:
-        status = 'SLO_VIOLATION'
+        all_ok = ttft_p50_ok and ttft_p99_ok and tpot_ok
+        min_margin = min(ttft_p50_margin, ttft_p99_margin, tpot_margin)
+        if all_ok and min_margin > 10:
+            status = 'OK'
+        elif all_ok:
+            status = 'SLO_MARGINAL'
+        else:
+            status = 'SLO_VIOLATION'
 
     # -- Qualidade ---------------------------------------------------------
     benchmarks = load_latency_benchmarks()
