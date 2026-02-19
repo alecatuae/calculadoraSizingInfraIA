@@ -12,24 +12,38 @@ Este diretório contém prompts estruturados para desenvolvimento de funcionalid
 **Arquivo**: `response_time_slo.md`  
 **Objetivo**: Integrar validação de tempo de resposta (latência) no sistema de sizing, permitindo definir e validar SLOs de performance.
 
+### 3. Sizing Orientado por Latência — Dois Modos de Calibração
+**Arquivo**: `latency_driven_sizing.md`  
+**Objetivo**: Implementar dois modos operacionais de dimensionamento detectados automaticamente pelo CLI, resolvendo o problema de infraestruturas dimensionadas corretamente em VRAM mas com TTFT infinito em produção.
+
+**Modo 1 — Concorrência-Driven com Auto-Calibração** (apenas `--concurrency`):
+- Aplica SLOs implícitos de `parameters.json` (`ttft_acceptable_ms`, `tpot_acceptable_tokens_per_sec`)
+- Calcula latência automaticamente sem precisar de `--ttft`/`--tpot`
+- Gera seção "Calibração Recomendada" quando os SLOs são violados, indicando nós necessários
+
+**Modo 2 — SLO-Driven** (`--ttft` e/ou `--tpot`, com ou sem `--concurrency`):
+- `--concurrency` torna-se opcional
+- Calcula a **concorrência máxima atendível** que respeita os SLOs especificados (sizing reverso)
+- Se `--concurrency` informado: usado apenas para storage/físico; nós são guiados pelos SLOs
+
 **Principais funcionalidades**:
-- ✅ Ranking de eficiência de KV cache
-- ✅ Comparativo de infraestrutura (nós, VRAM, energia, rack)
-- ✅ Análise de custo-benefício (TCO 3 anos)
-- ✅ Breakdown de VRAM (modelo fixo vs KV cache vs overhead)
-- ✅ Comparação de storage (volumetria, IOPS, throughput)
-- ✅ Recomendações executivas por caso de uso
-- ✅ Saída em Markdown e JSON
+- Detecção automática de modo (`concurrency_driven` | `slo_driven`)
+- Nova função `calc_max_concurrency_from_slo()` com inversão da fórmula M/M/c (Little's Law)
+- Novo dataclass `SLOCapacityResult` e `CalibrationRecommendation`
+- Novo campo `default_concurrency_slo_mode` em `parameters.json`
+- Alertas de inviabilidade quando `prefill_time >= TTFT_SLO`
+- Seções dedicadas nos relatórios técnico, executivo e JSON
+- Tabela de racional de cálculo com fórmulas de sizing reverso
 
 **Casos de uso**:
-- Escolher qual modelo LLM adotar para produção
-- Avaliar trade-offs entre eficiência de KV e tamanho do modelo
-- Estimar TCO para diferentes arquiteturas
-- Justificar decisões de infraestrutura para liderança executiva
+- "Tenho 1000 sessões simultâneas — minha infra vai atender com latência aceitável?"
+- "Quero TTFT < 1s e TPOT > 8 tok/s — quantas sessões consigo servir?"
+- "Quantos nós adicionais preciso para sair do TTFT ∞?"
 
-**Exemplo de uso**:
+**Exemplo de uso (Modo SLO-Driven)**:
 ```bash
-python analise_comparativa.py --models "DeepSeek-V3.2,opt-oss-120b" --scenario recommended
+python3 main.py --model opt-oss-120b --server dgx-b300 --storage netapp_a_series \
+  --effective-context 131072 --ttft 1000 --tpot 8.0 --executive-report
 ```
 
 ### 2. Response Time SLO

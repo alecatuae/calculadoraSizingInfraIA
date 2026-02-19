@@ -39,27 +39,62 @@ def format_exec_summary(
     lines.append(f"Precisão KV Cache:   {kv_precision.upper()}")
     lines.append("")
     
-    # Tabela de cenários
-    lines.append("-" * 155)
-    header = f"{'Cenário':<20} {'Nós':<8} {'kW Total':<12} {'Rack Total':<12} {'Storage Recomendado (TB)':<40} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
-    lines.append(header)
-    lines.append("-" * 155)
+    # Verificar se há dados de latência calculados
+    has_latency = any(scenarios[k].latency is not None for k in scenarios)
     
-    for key in ["minimum", "recommended", "ideal"]:
-        s = scenarios[key]
-        if s.storage:
-            # Mostrar valor RECOMENDADO (com margem)
-            storage_base = s.storage.storage_total_base_tb
-            storage_recommended = s.storage.storage_total_recommended_tb
-            margin_pct = s.storage.margin_percent * 100
-            storage_display = f"{storage_recommended:.1f} (base: {storage_base:.1f} TB + {margin_pct:.0f}%)"
-        else:
-            storage_display = "N/A"
-        
-        row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw_with_storage:<12.1f} {s.total_rack_u_with_storage:<12} {storage_display:<40} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
-        lines.append(row)
+    qual_pt = {'excellent': 'Excelente', 'good': 'Bom', 'acceptable': 'Aceitável', 'slow': 'Lento'}
+    status_icon_map = {'OK': '✅', 'SLO_MARGINAL': '⚠️', 'SLO_VIOLATION': '❌'}
+
+    if has_latency:
+        # Tabela estendida com TTFT e TPOT
+        lines.append("-" * 190)
+        header = (f"{'Cenário':<16} {'Nós':<6} {'kW Total':<10} {'Rack':<8} "
+                  f"{'Storage (TB)':<28} {'Sess./Nó':<10} {'KV/Sess.(GiB)':<15} "
+                  f"{'TTFT P50':<20} {'TPOT':<20} {'SLO':<8}")
+        lines.append(header)
+        lines.append("-" * 190)
+
+        for key in ["minimum", "recommended", "ideal"]:
+            s = scenarios[key]
+            storage_display = (
+                f"{s.storage.storage_total_recommended_tb:.1f} (+{s.storage.margin_percent*100:.0f}%)"
+                if s.storage else "N/A"
+            )
+            la = s.latency
+            if la:
+                ttft_str = f"{la.ttft_p50_ms:.0f}ms ({qual_pt.get(la.ttft_quality, la.ttft_quality)})"
+                if la.ttft_p50_ms >= 99000:
+                    ttft_str = "∞ (saturado)"
+                tpot_str = f"{la.tpot_tokens_per_sec:.1f} tok/s ({qual_pt.get(la.tpot_quality, la.tpot_quality)})"
+                slo_str = status_icon_map.get(la.status, la.status)
+            else:
+                ttft_str = tpot_str = slo_str = "N/A"
+
+            row = (f"{s.config.name:<16} {s.nodes_final:<6} {s.total_power_kw_with_storage:<10.1f} "
+                   f"{s.total_rack_u_with_storage:<8} {storage_display:<28} "
+                   f"{s.vram.sessions_per_node:<10} {s.vram.vram_per_session_gib:<15.2f} "
+                   f"{ttft_str:<20} {tpot_str:<20} {slo_str:<8}")
+            lines.append(row)
+
+        lines.append("-" * 190)
+    else:
+        # Tabela padrão sem latência
+        lines.append("-" * 155)
+        header = f"{'Cenário':<20} {'Nós':<8} {'kW Total':<12} {'Rack Total':<12} {'Storage Recomendado (TB)':<40} {'Sessões/Nó':<12} {'KV/Sessão (GiB)':<18}"
+        lines.append(header)
+        lines.append("-" * 155)
+
+        for key in ["minimum", "recommended", "ideal"]:
+            s = scenarios[key]
+            storage_display = (
+                f"{s.storage.storage_total_recommended_tb:.1f} (base: {s.storage.storage_total_base_tb:.1f} TB + {s.storage.margin_percent*100:.0f}%)"
+                if s.storage else "N/A"
+            )
+            row = f"{s.config.name:<20} {s.nodes_final:<8} {s.total_power_kw_with_storage:<12.1f} {s.total_rack_u_with_storage:<12} {storage_display:<40} {s.vram.sessions_per_node:<12} {s.vram.vram_per_session_gib:<18.2f}"
+            lines.append(row)
+
+        lines.append("-" * 155)
     
-    lines.append("-" * 155)
     lines.append("")
     
     # Nota sobre margem de capacidade
@@ -74,8 +109,15 @@ def format_exec_summary(
     # Recomendação
     rec = scenarios["recommended"]
     storage_info = f", {rec.storage.storage_total_recommended_tb:.1f} TB storage" if rec.storage else ""
+    rec_la = rec.latency
+    latency_info = ""
+    if rec_la:
+        ttft_display = f"{rec_la.ttft_p50_ms:.0f}ms" if rec_la.ttft_p50_ms < 99000 else "∞"
+        slo_status = {"OK": "✅ SLO atendido", "SLO_MARGINAL": "⚠️  SLO marginal", "SLO_VIOLATION": "❌ SLO violado"}.get(rec_la.status, "")
+        latency_info = f", TTFT {ttft_display} / TPOT {rec_la.tpot_tokens_per_sec:.1f} tok/s [{slo_status}]"
+
     lines.append(
-        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw_with_storage:.1f} kW total, {rec.total_rack_u_with_storage}U total{storage_info}) "
+        f"✓ Cenário RECOMENDADO ({rec.nodes_final} nós, {rec.total_power_kw_with_storage:.1f} kW total, {rec.total_rack_u_with_storage}U total{storage_info}{latency_info}) "
         f"atende os requisitos com tolerância a falhas ({rec.config.ha_mode.upper()})."
     )
     lines.append("")
@@ -130,6 +172,22 @@ def format_executive_markdown(
     
     rec = scenarios["recommended"]
     storage_rec = rec.storage if rec.storage else None
+    rec_la = rec.latency
+
+    # Sumário de latência no parágrafo se disponível
+    if rec_la:
+        ttft_display = f"{rec_la.ttft_p50_ms:.0f}ms" if rec_la.ttft_p50_ms < 99000 else "∞"
+        ttft_qual = {'excellent': 'excelente', 'good': 'bom', 'acceptable': 'aceitável', 'slow': 'lento'}.get(rec_la.ttft_quality, rec_la.ttft_quality)
+        tpot_qual = {'excellent': 'excelente', 'good': 'bom', 'acceptable': 'aceitável', 'slow': 'lento'}.get(rec_la.tpot_quality, rec_la.tpot_quality)
+        slo_text = {
+            'OK': '✅ SLOs de latência atendidos com margem.',
+            'SLO_MARGINAL': '⚠️  SLOs de latência atendidos com margem mínima — monitorar em produção.',
+            'SLO_VIOLATION': '❌ SLOs de latência **não atendidos** — gargalo identificado: ' + rec_la.bottleneck.split(' - ')[0] + '.'
+        }.get(rec_la.status, '')
+        lines.append(f"O cenário recomendado apresenta **TTFT de {ttft_display}** (qualidade: {ttft_qual}) e "
+                     f"**TPOT de {rec_la.tpot_tokens_per_sec:.2f} tok/s** (qualidade: {tpot_qual}). {slo_text}")
+        lines.append("")
+
     lines.append(f"**Recomendação:** {rec.nodes_final} nós DGX {server.name} ")
     if storage_rec:
         lines.append(f"({rec.total_power_kw:.1f} kW, {rec.total_rack_u}U rack, {storage_rec.storage_total_recommended_tb:.1f} TB storage) ")
@@ -187,6 +245,9 @@ def format_executive_markdown(
     lines.append("## Resultados por Cenário")
     lines.append("")
     
+    qual_label_md = {'excellent': '✅ Excelente', 'good': '✅ Bom', 'acceptable': '⚠️  Aceitável', 'slow': '❌ Lento'}
+    slo_label_md = {'OK': '✅ Atende', 'SLO_MARGINAL': '⚠️  Marginal', 'SLO_VIOLATION': '❌ Viola'}
+
     for key in ["minimum", "recommended", "ideal"]:
         s = scenarios[key]
         lines.append(f"### Cenário {s.config.name}")
@@ -212,6 +273,24 @@ def format_executive_markdown(
             lines.append(f"| Throughput (pico R/W) | {st.throughput_read_peak_gbps:.1f} / {st.throughput_write_peak_gbps:.1f} GB/s |")
         
         lines.append(f"| Arquitetura HA | {s.config.ha_mode.upper()} |")
+
+        # Latência TTFT/TPOT (sempre mostrar se disponível)
+        if s.latency:
+            la = s.latency
+            ttft_val = f"{la.ttft_p50_ms:.0f} ms" if la.ttft_p50_ms < 99000 else "∞ (saturado)"
+            ttft_p99_val = f"{la.ttft_p99_ms:.0f} ms" if la.ttft_p99_ms < 99000 else "∞ (saturado)"
+            tpot_val = f"{la.tpot_tokens_per_sec:.2f} tok/s (ITL: {la.itl_ms_per_token:.0f} ms/token)" if la.itl_ms_per_token < 99000 else f"{la.tpot_tokens_per_sec:.2f} tok/s"
+            util_val = f"{la.utilization * 100:.1f}%"
+            ttft_qual = qual_label_md.get(la.ttft_quality, la.ttft_quality)
+            tpot_qual = qual_label_md.get(la.tpot_quality, la.tpot_quality)
+            slo_val = slo_label_md.get(la.status, la.status)
+            lines.append(f"| **TTFT P50 (latência 1º token)** | **{ttft_val}** — {ttft_qual} |")
+            lines.append(f"| TTFT P99 | {ttft_p99_val} |")
+            lines.append(f"| **TPOT (velocidade streaming)** | **{tpot_val}** — {tpot_qual} |")
+            lines.append(f"| Utilização GPU (queuing) | {util_val} |")
+            lines.append(f"| Gargalo | {la.bottleneck.split(' - ')[0]} |")
+            lines.append(f"| **Status SLO Latência** | **{slo_val}** |")
+
         lines.append("")
         
         # Parágrafo executivo
@@ -258,6 +337,31 @@ def format_executive_markdown(
     
     lines.append(f"| Tolerância a falhas | Nenhuma | 1 nó | 2 nós |")
     lines.append(f"| Risco operacional | Alto | Médio | Baixo |")
+
+    # Latência na comparação
+    if any(scenarios[k].latency is not None for k in ["minimum", "recommended", "ideal"]):
+        def _ttft_str(key):
+            la = scenarios[key].latency
+            if la is None:
+                return "N/A"
+            if la.ttft_p50_ms >= 99000:
+                return "∞ (saturado)"
+            return f"{la.ttft_p50_ms:.0f} ms ({qual_label_md.get(la.ttft_quality, la.ttft_quality)})"
+        def _tpot_str(key):
+            la = scenarios[key].latency
+            if la is None:
+                return "N/A"
+            return f"{la.tpot_tokens_per_sec:.1f} tok/s ({qual_label_md.get(la.tpot_quality, la.tpot_quality)})"
+        def _slo_str(key):
+            la = scenarios[key].latency
+            if la is None:
+                return "N/A"
+            return slo_label_md.get(la.status, la.status)
+
+        lines.append(f"| **TTFT P50** | {_ttft_str('minimum')} | {_ttft_str('recommended')} | {_ttft_str('ideal')} |")
+        lines.append(f"| **TPOT** | {_tpot_str('minimum')} | {_tpot_str('recommended')} | {_tpot_str('ideal')} |")
+        lines.append(f"| Status SLO Latência | {_slo_str('minimum')} | {_slo_str('recommended')} | {_slo_str('ideal')} |")
+
     lines.append("")
     lines.append(f"**Conclusão:** O cenário **RECOMENDADO** oferece o melhor equilíbrio custo-risco para operação em produção. ")
     if scenarios['recommended'].storage:
