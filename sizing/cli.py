@@ -40,6 +40,11 @@ class CLIConfig:
     capacity_margin: Optional[float]
     target_load_time: Optional[float]
     
+    # SLOs de Latência LLM
+    ttft: Optional[int]
+    ttft_p99: Optional[int]
+    tpot: Optional[float]
+    
     # Outputs
     executive_report: bool
     verbose: bool
@@ -100,6 +105,24 @@ def create_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-load-time", type=float,
                         help="Tempo alvo (segundos) para carregar modelo no restart (default: 60s, definido em parameters.json)")
     
+    # SLOs de Latência LLM
+    parser.add_argument(
+        "--ttft", type=int, required=False,
+        help="Time to First Token alvo em millisegundos (ms). Define o SLO de latência P50 até primeiro token. "
+             "Exemplo: 1000 para 1s. Valores típicos: 500-2000ms. Bom: <500ms, Lento: >2000ms. "
+             "Se não especificado, não valida TTFT."
+    )
+    parser.add_argument(
+        "--ttft-p99", type=int, required=False,
+        help="TTFT alvo P99 em millisegundos (ms). Default: --ttft * ttft_p99_multiplier (de parameters.json, padrão 2.0)."
+    )
+    parser.add_argument(
+        "--tpot", type=float, required=False,
+        help="Time Per Output Token (tokens/segundo) mínimo esperado. Define velocidade de streaming. "
+             "Exemplo: 8.0 para 8 tokens/s. Valores típicos: 6-10 tokens/s. Bom: >10 tokens/s, Lento: <6 tokens/s. "
+             "Se não especificado, não valida throughput de geração."
+    )
+    
     # Saídas
     parser.add_argument("--executive-report", action="store_true",
                         help="Gerar relatório executivo adicional em Markdown")
@@ -120,7 +143,6 @@ def parse_cli_args() -> CLIConfig:
     
     # Se --validate-only, não exigir model/server/storage/concurrency/effective-context
     if args.validate_only:
-        # Criar um config dummy para validação
         return CLIConfig(
             model_name=args.model if args.model else "dummy",
             server_name=args.server if args.server else "dummy",
@@ -142,6 +164,9 @@ def parse_cli_args() -> CLIConfig:
             warmup_utilization_ratio=args.warmup_utilization_ratio,
             capacity_margin=args.capacity_margin,
             target_load_time=args.target_load_time,
+            ttft=args.ttft,
+            ttft_p99=args.ttft_p99,
+            tpot=args.tpot,
             executive_report=args.executive_report,
             verbose=args.verbose,
             validate_only=True
@@ -168,6 +193,9 @@ def parse_cli_args() -> CLIConfig:
         warmup_utilization_ratio=args.warmup_utilization_ratio,
         capacity_margin=args.capacity_margin,
         target_load_time=args.target_load_time,
+        ttft=args.ttft,
+        ttft_p99=args.ttft_p99,
+        tpot=args.tpot,
         executive_report=args.executive_report,
         verbose=args.verbose,
         validate_only=args.validate_only

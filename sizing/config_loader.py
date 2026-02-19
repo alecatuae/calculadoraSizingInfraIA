@@ -85,6 +85,7 @@ class ConfigLoader:
                 weights_memory_gib_int8=m.get("weights_memory_gib_int8"),
                 weights_memory_gib_int4=m.get("weights_memory_gib_int4"),
                 default_weights_precision=m.get("default_weights_precision", "fp8"),
+                performance=m.get("performance", {}),
                 notes=m.get("notes", "")
             )
             model.validate()

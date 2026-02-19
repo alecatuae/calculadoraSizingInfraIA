@@ -2,8 +2,8 @@
 Definições de modelos LLM e suas especificações arquiteturais.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -33,6 +33,9 @@ class ModelSpec:
     weights_memory_gib_int8: Optional[float] = None
     weights_memory_gib_int4: Optional[float] = None
     default_weights_precision: Optional[str] = None
+    
+    # Performance data (prefill/decode throughput per GPU type)
+    performance: Dict[str, Any] = field(default_factory=dict)
     
     # Optional metadata
     active_params_b: Optional[float] = None  # For MoE models

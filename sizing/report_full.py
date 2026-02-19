@@ -2,11 +2,12 @@
 Geração de relatório completo (técnico detalhado).
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .calc_scenarios import ScenarioResult
 from .models import ModelSpec
 from .servers import ServerSpec
 from .storage import StorageProfile
+from .calc_response_time import LatencyAnalysis, latency_analysis_to_dict
 
 
 def format_full_report(
@@ -195,6 +196,138 @@ def format_full_report(
     lines.append(platform_rationale.get("operational_meaning", "Volume estrutural fixo da plataforma de IA."))
     lines.append("")
     
+    # Seção 2.8: Análise de Latência (TTFT/TPOT) - apenas se SLOs foram definidos
+    any_latency = any(scenarios[k].latency is not None for k in scenarios)
+    if any_latency:
+        lines.append("┌" + "─" * 98 + "┐")
+        lines.append("│" + " SEÇÃO 2.8: ANÁLISE DE LATÊNCIA DE INFERÊNCIA (TTFT E TPOT)".ljust(98) + "│")
+        lines.append("└" + "─" * 98 + "┘")
+        lines.append("")
+
+        # Cabeçalho SLO (uma vez só)
+        first_la = next(scenarios[k].latency for k in ["minimum", "recommended", "ideal"] if scenarios[k].latency)
+        from .calc_response_time import load_latency_benchmarks
+        benchmarks = load_latency_benchmarks()
+
+        lines.append("SLO Definido:")
+        if first_la.target_ttft_p50_ms:
+            lines.append(f"  • TTFT P50: {first_la.target_ttft_p50_ms} ms ({first_la.target_ttft_p50_ms/1000:.1f}s)")
+        if first_la.target_ttft_p99_ms:
+            lines.append(f"  • TTFT P99: {first_la.target_ttft_p99_ms} ms ({first_la.target_ttft_p99_ms/1000:.1f}s)")
+        if first_la.target_tpot_tokens_per_sec:
+            lines.append(f"  • TPOT mínimo: {first_la.target_tpot_tokens_per_sec:.1f} tokens/segundo")
+        lines.append("")
+
+        lines.append("Premissas:")
+        lines.append(f"  • Tokens de entrada (média): {first_la.avg_input_tokens:,}")
+        lines.append(f"  • Tokens de saída (média): {first_la.avg_output_tokens}")
+        lines.append(f"  • Network Latency P50: {first_la.network_latency_p50_ms:.0f} ms")
+        lines.append(f"  • Network Latency P99: {first_la.network_latency_p99_ms:.0f} ms")
+        lines.append(f"  • Fonte prefill: {first_la.source_prefill}")
+        lines.append(f"  • Fonte decode: {first_la.source_decode}")
+        lines.append("")
+
+        ttft_exc = benchmarks.get('ttft_excellent_ms', 500)
+        ttft_acc = benchmarks.get('ttft_acceptable_ms', 2000)
+        tpot_exc = benchmarks.get('tpot_excellent_tokens_per_sec', 10)
+        tpot_acc = benchmarks.get('tpot_acceptable_tokens_per_sec', 6)
+        lines.append("Benchmarks da Indústria:")
+        lines.append(f"  • TTFT: Excelente < {ttft_exc}ms | Aceitável: {ttft_exc}-{ttft_acc}ms | Lento > {ttft_acc}ms")
+        lines.append(f"  • TPOT: Excelente > {tpot_exc} tok/s | Aceitável: {tpot_acc}-{tpot_exc} tok/s | Lento < {tpot_acc} tok/s")
+        lines.append("")
+
+        # Por cenário
+        scenario_label_map = {
+            "minimum": "MÍNIMO", "recommended": "RECOMENDADO", "ideal": "IDEAL"
+        }
+        status_icon = {'OK': '✅', 'SLO_MARGINAL': '⚠️ ', 'SLO_VIOLATION': '❌', 'NO_SLO': 'ℹ️ '}
+        qual_label = {
+            'excellent': 'EXCELENTE', 'good': 'BOM', 'acceptable': 'ACEITÁVEL', 'slow': 'LENTO'
+        }
+        util_label = lambda u: (
+            'CRÍTICO (risco de saturação)' if u >= 0.90 else
+            'ALTO' if u >= 0.80 else
+            'ACEITÁVEL' if u >= 0.60 else
+            'IDEAL'
+        )
+
+        for key in ["minimum", "recommended", "ideal"]:
+            la = scenarios[key].latency
+            if la is None:
+                continue
+            lines.append("─" * 84)
+            lines.append(f"CENÁRIO: {scenario_label_map[key]}")
+            lines.append("─" * 84)
+            lines.append("")
+
+            # TTFT
+            lines.append("TTFT (Time to First Token):")
+            lines.append(f"  • Network Latency:      {la.network_latency_p50_ms:>8.0f} ms")
+            if la.queuing_delay_p50_ms >= 99000:
+                lines.append(f"  • Queuing Delay P50:    {'∞ (saturado)':>12}")
+            else:
+                lines.append(f"  • Queuing Delay P50:    {la.queuing_delay_p50_ms:>8.0f} ms")
+            lines.append(f"  • Prefill Time:         {la.prefill_time_ms:>8.0f} ms")
+            lines.append(f"  • {'─'*29}")
+            if la.target_ttft_p50_ms:
+                slo_icon = '✅' if la.ttft_p50_ok else '❌'
+                margin_txt = f"+{abs(la.ttft_p50_margin_percent):.1f}% margem" if la.ttft_p50_ok else f"+{abs(la.ttft_p50_margin_percent):.1f}% acima do SLO"
+                lines.append(f"  • TTFT P50:             {la.ttft_p50_ms:>8.0f} ms  {slo_icon} {margin_txt}")
+            else:
+                lines.append(f"  • TTFT P50:             {la.ttft_p50_ms:>8.0f} ms  (sem SLO definido)")
+            if la.target_ttft_p99_ms:
+                slo_icon = '✅' if la.ttft_p99_ok else '❌'
+                lines.append(f"  • TTFT P99:             {la.ttft_p99_ms:>8.0f} ms  {slo_icon} (SLO: {la.target_ttft_p99_ms}ms)")
+            lines.append("")
+            lines.append(f"Status TTFT: {'✅ SLO ATENDIDO' if la.ttft_p50_ok else '❌ SLO NÃO ATENDIDO'}")
+            lines.append(f"Classificação TTFT: {qual_label.get(la.ttft_quality, la.ttft_quality.upper())} — {_ttft_qual_desc(la.ttft_quality, benchmarks)}")
+            lines.append("")
+
+            # TPOT
+            lines.append("TPOT (Time Per Output Token):")
+            lines.append(f"  • Throughput decode (nó):  {la.decode_throughput:>8.0f} tokens/s")
+            lines.append(f"  • Sessões ativas por nó:   {scenarios[key].sessions_per_node_effective:>8} (efetivas)")
+            lines.append(f"  • {'─'*35}")
+            if la.target_tpot_tokens_per_sec:
+                slo_icon = '✅' if la.tpot_ok else '❌'
+                margin_txt = f"+{abs(la.tpot_margin_percent):.1f}% acima do mínimo" if la.tpot_ok else f"{abs(la.tpot_margin_percent):.1f}% abaixo do SLO"
+                lines.append(f"  • TPOT por sessão:         {la.tpot_tokens_per_sec:>8.2f} tok/s  {slo_icon} {margin_txt}")
+            else:
+                lines.append(f"  • TPOT por sessão:         {la.tpot_tokens_per_sec:>8.2f} tok/s  (sem SLO definido)")
+            lines.append(f"  • ITL (ms/token):          {la.itl_ms_per_token:>8.0f} ms/token")
+            lines.append("")
+            lines.append(f"Status TPOT: {'✅ SLO ATENDIDO' if la.tpot_ok else '❌ SLO NÃO ATENDIDO'}")
+            lines.append(f"Classificação TPOT: {qual_label.get(la.tpot_quality, la.tpot_quality.upper())} — {_tpot_qual_desc(la.tpot_quality, benchmarks)}")
+            lines.append("")
+
+            lines.append(f"Utilização: {la.utilization*100:.1f}% ({util_label(la.utilization)})")
+            lines.append(f"Gargalo Principal: {la.bottleneck}")
+            lines.append("")
+            lines.append(f"Recomendação:")
+            for rec_line in la.recommendation.split('\n'):
+                lines.append(f"  {rec_line}")
+            lines.append("")
+
+        # Racional de cálculo TTFT/TPOT
+        lines.append("═" * 84)
+        lines.append("RACIONAL DE CÁLCULO: TTFT E TPOT")
+        lines.append("═" * 84)
+        lines.append("")
+        lines.append(f"{'Componente':<30} {'Fórmula':<35} {'Fonte':<35}")
+        lines.append("-" * 100)
+        lines.append(f"{'Network Latency':<30} {'network_latency_p50_ms':<35} {'parameters.json':<35}")
+        lines.append(f"{'avg_output_tokens':<30} {'avg_output_tokens':<35} {'parameters.json':<35}")
+        lines.append(f"{'Prefill Time':<30} {'(input_tokens/prefill_thr)*1000':<35} {'models.json → performance':<35}")
+        lines.append(f"{'num_input_tokens':<30} {'effective_context / 2':<35} {'CLI --effective-context':<35}")
+        lines.append(f"{'Queuing Delay':<30} {'(ρ/(1-ρ)) × SvcTime × factor':<35} {'parameters.json (queuing_factor_*)':<35}")
+        lines.append(f"{'max_utilization':<30} {'threshold de saturação':<35} {'parameters.json':<35}")
+        lines.append(f"{'TTFT':<30} {'network + queuing + prefill':<35} {'(derivado)':<35}")
+        lines.append(f"{'Decode Throughput':<30} {'decode_tokens_per_sec_<gpu>':<35} {'models.json → performance':<35}")
+        lines.append(f"{'TPOT':<30} {'decode_thr / sessions_per_node':<35} {'models.json + sizing':<35}")
+        lines.append(f"{'ITL':<30} {'1000 / TPOT':<35} {'(derivado)':<35}")
+        lines.append(f"{'Benchmarks':<30} {'latency_benchmarks.*':<35} {'parameters.json':<35}")
+        lines.append("")
+
     # Seção 3: Resultados por Cenário
     lines.append("┌" + "─" * 98 + "┐")
     lines.append("│" + " SEÇÃO 3: RESULTADOS POR CENÁRIO".ljust(98) + "│")
@@ -255,6 +388,34 @@ def format_full_report(
     lines.append("=" * 100)
     
     return "\n".join(lines)
+
+
+def _ttft_qual_desc(quality: str, benchmarks: dict) -> str:
+    """Retorna descrição textual da qualidade TTFT."""
+    exc = benchmarks.get('ttft_excellent_ms', 500)
+    acc = benchmarks.get('ttft_acceptable_ms', 2000)
+    if quality == 'excellent':
+        return f"< {exc}ms — experiência interativa, sem percepção de delay"
+    elif quality == 'good':
+        return f"< {benchmarks.get('ttft_good_ms', 1000)}ms — responsivo, delay mínimo"
+    elif quality == 'acceptable':
+        return f"até {acc}ms — padrão da indústria"
+    else:
+        return f"> {acc}ms — usuário percebe demora significativa"
+
+
+def _tpot_qual_desc(quality: str, benchmarks: dict) -> str:
+    """Retorna descrição textual da qualidade TPOT."""
+    exc = benchmarks.get('tpot_excellent_tokens_per_sec', 10)
+    acc = benchmarks.get('tpot_acceptable_tokens_per_sec', 6)
+    if quality == 'excellent':
+        return f"> {exc} tok/s — streaming fluido (~{int(exc*0.6)} palavras/min)"
+    elif quality == 'good':
+        return f"{benchmarks.get('tpot_good_tokens_per_sec', 8)}-{exc} tok/s — streaming adequado"
+    elif quality == 'acceptable':
+        return f"{acc}-{benchmarks.get('tpot_good_tokens_per_sec', 8)} tok/s — mínimo para produção"
+    else:
+        return f"< {acc} tok/s — streaming lento, prejudica UX"
 
 
 def format_json_report(
@@ -336,6 +497,10 @@ def format_json_report(
                 "throughput_write_steady_gbps": round(s.storage.throughput_write_steady_gbps, 2)
             }
             result["rationale_storage"] = s.storage.rationale
+        
+        # Adicionar análise de latência se disponível
+        if s.latency is not None:
+            result["latency_analysis"] = latency_analysis_to_dict(s.latency)
         
         return result
     

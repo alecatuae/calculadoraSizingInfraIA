@@ -7,5 +7,26 @@
     "storage_logs"
   ],
   "target_load_time_sec": 900.0,
-  "notes": "Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional. target_load_time_sec define o tempo máximo aceitável (em segundos) para carregar pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage."
+
+  "network_latency_p50_ms": 10,
+  "network_latency_p99_ms": 50,
+  "avg_output_tokens": 100,
+
+  "max_utilization_threshold": 0.95,
+  "target_utilization_recommended": 0.70,
+  "target_utilization_ideal": 0.50,
+  "ttft_p99_multiplier": 2.0,
+  "queuing_factor_p50": 0.3,
+  "queuing_factor_p99": 0.8,
+
+  "latency_benchmarks": {
+    "ttft_excellent_ms": 500,
+    "ttft_good_ms": 1000,
+    "ttft_acceptable_ms": 2000,
+    "tpot_excellent_tokens_per_sec": 10,
+    "tpot_good_tokens_per_sec": 8,
+    "tpot_acceptable_tokens_per_sec": 6
+  },
+
+  "notes": "Margem recomendada para crescimento, retenção adicional e eventos não previstos. Baseada em práticas de SRE e governança de capacidade para ambientes de produção críticos. Valor configurável conforme estratégia organizacional. target_load_time_sec define o tempo máximo aceitável (em segundos) para carregar pesos do modelo durante restart/scale-out, impactando o cálculo de throughput pico de storage. network_latency_* define latência de rede típica para datacenter interno. avg_output_tokens define comprimento médio de resposta. max_utilization_threshold define quando o sistema é considerado saturado (queuing → infinito). ttft_p99_multiplier usado para calcular P99 se não especificado pelo usuário. queuing_factor_* são fatores de Little's Law para cálculo de queuing delay. latency_benchmarks definem thresholds para classificação de qualidade (excellent/good/acceptable/slow)."
 }

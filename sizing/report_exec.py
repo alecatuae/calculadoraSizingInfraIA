@@ -291,7 +291,70 @@ def format_executive_markdown(
     lines.append("---")
     lines.append("")
     
-    # Glossário Executivo de Termos
+    # Seção de Análise de Latência — apenas se SLOs foram definidos
+    any_latency = any(scenarios[k].latency is not None for k in scenarios)
+    if any_latency:
+        lines.append("## ⏱️  Análise de Latência de Inferência (TTFT e TPOT)")
+        lines.append("")
+
+        first_la = next(scenarios[k].latency for k in ["minimum", "recommended", "ideal"] if scenarios[k].latency)
+
+        if first_la.target_ttft_p50_ms or first_la.target_tpot_tokens_per_sec:
+            lines.append("**SLO Definido:**")
+            if first_la.target_ttft_p50_ms:
+                lines.append(f"- TTFT (Time to First Token) P50: **{first_la.target_ttft_p50_ms}ms**")
+            if first_la.target_ttft_p99_ms:
+                lines.append(f"- TTFT P99: **{first_la.target_ttft_p99_ms}ms**")
+            if first_la.target_tpot_tokens_per_sec:
+                lines.append(f"- TPOT mínimo: **{first_la.target_tpot_tokens_per_sec:.1f} tokens/s**")
+            lines.append("")
+
+        status_icon = {'OK': '✅', 'SLO_MARGINAL': '⚠️', 'SLO_VIOLATION': '❌', 'NO_SLO': 'ℹ️'}
+        qual_pt = {'excellent': 'Excelente', 'good': 'Bom', 'acceptable': 'Aceitável', 'slow': 'Lento'}
+
+        lines.append("| Cenário | TTFT P50 | TPOT | Status | Gargalo | Ação Prioritária |")
+        lines.append("|---------|----------|------|--------|---------|-----------------|")
+        for key in ["minimum", "recommended", "ideal"]:
+            s = scenarios[key]
+            la = s.latency
+            if la is None:
+                continue
+            ttft_txt = f"{la.ttft_p50_ms:.0f}ms ({qual_pt.get(la.ttft_quality, la.ttft_quality)})"
+            tpot_txt = f"{la.tpot_tokens_per_sec:.1f} tok/s ({qual_pt.get(la.tpot_quality, la.tpot_quality)})"
+            icon = status_icon.get(la.status, '?')
+            status_txt = {'OK': 'Atende SLO', 'SLO_MARGINAL': 'Marginal', 'SLO_VIOLATION': 'Viola SLO'}.get(la.status, la.status)
+            bottleneck_short = la.bottleneck.split(' - ')[0] if ' - ' in la.bottleneck else la.bottleneck[:20]
+            rec_short = la.recommendation.strip().split('\n')[0].strip().lstrip('1234567890. ') if la.recommendation else 'N/A'
+            if len(rec_short) > 60:
+                rec_short = rec_short[:57] + '...'
+            scenario_name = {'minimum': 'Mínimo', 'recommended': 'Recomendado', 'ideal': 'Ideal'}[key]
+            lines.append(f"| {scenario_name} | {ttft_txt} | {tpot_txt} | {icon} {status_txt} | {bottleneck_short} | {rec_short} |")
+
+        lines.append("")
+
+        # Breakdown cenário recomendado
+        rec_la = scenarios['recommended'].latency
+        if rec_la:
+            total_latency = rec_la.ttft_p50_ms
+            net_pct = rec_la.network_latency_p50_ms / total_latency * 100 if total_latency > 0 else 0
+            pref_pct = rec_la.prefill_time_ms / total_latency * 100 if total_latency > 0 else 0
+            q_pct = (min(rec_la.queuing_delay_p50_ms, total_latency) / total_latency * 100) if total_latency > 0 and rec_la.queuing_delay_p50_ms < 99000 else 0
+            lines.append("**Breakdown de Latência TTFT (Cenário Recomendado):**")
+            lines.append(f"- Network: {rec_la.network_latency_p50_ms:.0f}ms ({net_pct:.1f}%)")
+            lines.append(f"- Prefill: {rec_la.prefill_time_ms:.0f}ms ({pref_pct:.1f}%)")
+            if rec_la.queuing_delay_p50_ms < 99000:
+                lines.append(f"- Queuing: {rec_la.queuing_delay_p50_ms:.0f}ms ({q_pct:.1f}%)")
+            else:
+                lines.append("- Queuing: ∞ (sistema saturado)")
+            lines.append(f"- TPOT por sessão: {rec_la.tpot_tokens_per_sec:.2f} tok/s (ITL: {rec_la.itl_ms_per_token:.0f}ms/token)")
+            lines.append(f"- Utilização: {rec_la.utilization*100:.1f}%")
+            lines.append("")
+            lines.append(f"**Gargalo Principal:** {rec_la.bottleneck}")
+            lines.append("")
+
+        lines.append("---")
+        lines.append("")
+
     lines.append("## Glossário Executivo de Termos")
     lines.append("")
     lines.append("| Métrica | O que significa | Por que importa para a decisão | Impacto se estiver errado |")
@@ -310,6 +373,8 @@ def format_executive_markdown(
     lines.append("| **IOPS (pico R/W)** | Número máximo de operações de leitura e escrita por segundo no pico. | Determina se o storage suporta eventos como subida simultânea de múltiplos servidores. | Gargalo de IOPS aumenta tempo de recuperação e escala. |")
     lines.append("| **Throughput (pico R/W)** | Volume máximo de dados transferidos por segundo no pico de uso. | Afeta tempo de carregamento do modelo e recuperação após falhas. | Throughput insuficiente aumenta tempo de indisponibilidade. |")
     lines.append("| **Arquitetura HA** | Nível de tolerância a falhas adotado (ex.: NONE, N+1, N+2). | Define o quanto o sistema continua operando mesmo após falhas de hardware. | Ausência de HA pode causar interrupção total do serviço. |")
+    lines.append("| **TTFT** | Tempo até o primeiro token ser retornado ao usuário (inclui rede, fila e prefill). | Latência percebida pelo usuário — define se o sistema parece 'responsivo'. | TTFT alto faz o usuário perceber demora antes de qualquer resposta aparecer. |")
+    lines.append("| **TPOT/ITL** | Velocidade de geração de tokens (tokens/s) ou intervalo entre tokens (ms/token). | Determina a fluidez do streaming — quantas palavras por minuto o usuário vê. | TPOT baixo torna o streaming lento e perceptivelmente truncado. |")
     lines.append("")
     lines.append("---")
     lines.append("")

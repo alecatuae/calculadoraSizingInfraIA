@@ -51,6 +51,9 @@ class ScenarioResult:
     # Físico - Total (Compute + Storage)
     total_power_kw_with_storage: float = 0.0
     total_rack_u_with_storage: int = 0
+    
+    # Análise de latência TTFT/TPOT (será preenchido por main se --ttft/--tpot)
+    latency: Optional[object] = None
 
 
 def create_scenario_configs(

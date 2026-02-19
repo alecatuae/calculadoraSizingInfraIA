@@ -23,6 +23,9 @@ from sizing.validator import validate_all_configs, print_validation_report
 from sizing.report_full import format_full_report, format_json_report
 from sizing.report_exec import format_exec_summary, format_executive_markdown
 from sizing.writer import ReportWriter
+from sizing.calc_response_time import (
+    calc_latency_analysis, has_performance_data, load_latency_benchmarks
+)
 
 
 def main():
@@ -111,6 +114,44 @@ def main():
             filepath="platform_storage_profile.json"
         )
         
+        # Validar SLOs de latência se especificados
+        if config.ttft is not None:
+            if config.ttft < 100:
+                print("❌ ERRO: --ttft deve ser >= 100ms (latências realistas para LLMs de produção)")
+                sys.exit(1)
+            if config.ttft > 10000:
+                print("❌ ERRO: --ttft deve ser <= 10000ms (10s, limite de experiência aceitável)")
+                sys.exit(1)
+            if config.ttft_p99 is not None and config.ttft_p99 < config.ttft:
+                print("❌ ERRO: --ttft-p99 deve ser >= --ttft")
+                sys.exit(1)
+            benchmarks = load_latency_benchmarks()
+            ttft_excellent = benchmarks.get('ttft_excellent_ms', 500)
+            ttft_acceptable = benchmarks.get('ttft_acceptable_ms', 2000)
+            if config.ttft < ttft_excellent:
+                print(f"ℹ️  TTFT alvo: {config.ttft}ms - Excelente (< {ttft_excellent}ms)")
+            elif config.ttft <= ttft_acceptable:
+                print(f"ℹ️  TTFT alvo: {config.ttft}ms - Aceitável (padrão da indústria: {ttft_excellent}-{ttft_acceptable}ms)")
+            else:
+                print(f"⚠️  TTFT alvo: {config.ttft}ms - Lento (> {ttft_acceptable}ms, usuário perceberá demora)")
+
+        if config.tpot is not None:
+            if config.tpot < 1.0:
+                print("❌ ERRO: --tpot deve ser >= 1.0 tokens/s (mínimo viável)")
+                sys.exit(1)
+            if config.tpot > 200.0:
+                print("❌ ERRO: --tpot deve ser <= 200.0 tokens/s (limite físico realista)")
+                sys.exit(1)
+            benchmarks = load_latency_benchmarks()
+            tpot_excellent = benchmarks.get('tpot_excellent_tokens_per_sec', 10)
+            tpot_acceptable = benchmarks.get('tpot_acceptable_tokens_per_sec', 6)
+            if config.tpot > tpot_excellent:
+                print(f"ℹ️  TPOT alvo: {config.tpot} tok/s - Excelente (> {tpot_excellent} tok/s)")
+            elif config.tpot >= tpot_acceptable:
+                print(f"ℹ️  TPOT alvo: {config.tpot} tok/s - Aceitável (padrão da indústria: {tpot_acceptable}-{tpot_excellent} tok/s)")
+            else:
+                print(f"⚠️  TPOT alvo: {config.tpot} tok/s - Baixo (< {tpot_acceptable} tok/s, streaming pode ser lento)")
+
         if config.verbose:
             print(f"   ✓ Modelo: {model.name}")
             print(f"   ✓ Servidor: {server.name}")
@@ -120,6 +161,10 @@ def main():
             load_time_source = "CLI override" if config.target_load_time is not None else "parameters.json"
             print(f"   ✓ Tempo de Carga Alvo: {capacity_policy.target_load_time_sec:.0f}s ({load_time_source})")
             print(f"   ✓ Plataforma Storage: {platform_storage_profile.total_per_server_gb:.0f} GB/servidor ({platform_storage_profile.total_per_server_tb:.2f} TB)")
+            if config.ttft:
+                print(f"   ✓ SLO TTFT: {config.ttft}ms (P50), {config.ttft_p99 or 'auto'}ms (P99)")
+            if config.tpot:
+                print(f"   ✓ SLO TPOT: {config.tpot} tok/s")
         
         # 4. Calcular KV cache
         if config.verbose:
@@ -342,6 +387,67 @@ def main():
                     f"AÇÃO: Considere storage com capacidade adicional de {storage_reqs.storage_total_recommended_tb * 0.3:.2f} TB (~30% buffer) ou reduza retenção de logs."
                 )
             
+            # Calcular análise de latência TTFT/TPOT se SLOs definidos
+            latency = None
+            if config.ttft is not None or config.tpot is not None:
+                if not has_performance_data(model, server):
+                    if config.verbose:
+                        print(f"   ⚠️  Dados de performance não encontrados para {model.name} em {server.gpu.model}. Usando estimativa genérica.")
+                latency = calc_latency_analysis(
+                    model=model,
+                    server=server,
+                    num_nodes=scenario.nodes_final,
+                    sessions_per_node=scenario.sessions_per_node_effective,
+                    concurrency=config.concurrency,
+                    target_ttft_p50_ms=config.ttft,
+                    target_ttft_p99_ms=config.ttft_p99,
+                    target_tpot_min_tokens_per_sec=config.tpot,
+                    effective_context=kv_result.effective_context_clamped
+                )
+                scenario.latency = latency
+
+                # Emitir alertas de SLO de latência
+                if latency and latency.status == 'SLO_VIOLATION':
+                    benchmarks = load_latency_benchmarks()
+                    ttft_acceptable = benchmarks.get('ttft_acceptable_ms', 2000)
+                    tpot_acceptable = benchmarks.get('tpot_acceptable_tokens_per_sec', 6)
+                    tpot_good = benchmarks.get('tpot_good_tokens_per_sec', 8)
+                    tpot_excellent = benchmarks.get('tpot_excellent_tokens_per_sec', 10)
+
+                    alert_lines = [f"⚠️  [{scenario_config.name}] SLO de Latência NÃO ATENDIDO:"]
+
+                    if config.ttft and not latency.ttft_p50_ok:
+                        deficit = latency.ttft_p50_ms - config.ttft
+                        alert_lines.append(
+                            f"   TTFT P50: esperado {latency.ttft_p50_ms:.0f}ms, SLO {config.ttft}ms "
+                            f"(déficit: {deficit:.0f}ms, +{abs(latency.ttft_p50_margin_percent):.1f}%). "
+                            f"Qualidade: {latency.ttft_quality.upper()}. "
+                            f"IMPACTO: Usuário percebe latência {'significativa' if latency.ttft_p50_ms > ttft_acceptable else 'moderada'} antes do primeiro token. "
+                            f"AÇÃO: {latency.recommendation.strip()}"
+                        )
+
+                    if config.tpot and not latency.tpot_ok:
+                        deficit = (config.tpot or 0) - latency.tpot_tokens_per_sec
+                        alert_lines.append(
+                            f"   TPOT: esperado {latency.tpot_tokens_per_sec:.2f} tok/s, SLO {config.tpot} tok/s "
+                            f"(déficit: {deficit:.2f} tok/s, {abs(latency.tpot_margin_percent):.1f}% abaixo). "
+                            f"ITL: {latency.itl_ms_per_token:.0f}ms/token. "
+                            f"Qualidade: {latency.tpot_quality.upper()}. "
+                            f"IMPACTO: Streaming {'impraticável' if latency.tpot_tokens_per_sec < tpot_acceptable else 'lento'} - "
+                            f"usuário percebe geração token a token. "
+                            f"GARGALO: {latency.bottleneck}"
+                        )
+
+                    all_warnings.append('\n   '.join(alert_lines))
+
+                elif latency and latency.status == 'SLO_MARGINAL':
+                    all_warnings.append(
+                        f"ℹ️  [{scenario_config.name}] SLO de Latência ATENDIDO COM MARGEM MÍNIMA "
+                        f"(TTFT P50: {latency.ttft_p50_ms:.0f}ms/{config.ttft or 'N/A'}ms, "
+                        f"TPOT: {latency.tpot_tokens_per_sec:.2f}/{config.tpot or 'N/A'} tok/s). "
+                        f"Margem < 10% — monitorar em produção."
+                    )
+
             scenarios[key] = scenario
         
         # Consolidar alertas de storage
